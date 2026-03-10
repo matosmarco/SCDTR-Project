@@ -1,5 +1,4 @@
 #include "box.h"
-
 Box::Box(){
 	backgroundLux = 0.0;
 	gain = 0.0;
@@ -147,6 +146,7 @@ float Box::get_gain() {
     return gain;
 }
 
-float Box::get_background() {
+float Box::get_background(LDR& ldr) {
+    backgroundLux = ldr.readLux();
     return backgroundLux;
 }

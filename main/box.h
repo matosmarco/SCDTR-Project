@@ -22,7 +22,7 @@ public:
 
 	// Get values
 	float get_gain();
-	float get_background();
+	float get_background(LDR& ldr);
 };
 
 

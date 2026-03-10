@@ -13,7 +13,7 @@ public:
 	
 	// Different formats for the dimming specification
 	void setDuty(float duty, int range = (ADC_MAX - 1)); // 0.0 to 1.0 
-	void setPercentage(float percentage, int range = (ADC_MAX-1));// 0.0% to 100.0%
+	void setPercentage(float percent2age, int range = (ADC_MAX-1));// 0.0% to 100.0%
 	void setRaw(int value, int range = (ADC_MAX-1)); // 0 to 4095
 	void off();
 };

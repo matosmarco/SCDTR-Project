@@ -7,6 +7,13 @@
 LED led;
 LDR ldr;
 Box box;
+Metrics metrics (0.014); // P_max = 0.014 W
+Luminaire luminaire;
+pid pid(0.01);
+
+// Variáveis de tempo para o ciclo de 100Hz 
+unsigned long last_time = 0;
+const unsigned long sample_time = 10; // 10ms = 100Hz
 
 void setup(){
   Serial.begin(115200);
@@ -26,7 +33,6 @@ void loop(){
     if(Serial.available()){
 
         String cmd = Serial.readStringUntil('\n');
-
-        processCommand(cmd, led, ldr, box);
+        processCommand(cmd, led, ldr, box, metrics, luminaire, pid);
     }
 }
