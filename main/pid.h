@@ -1,36 +1,46 @@
 #ifndef PID_H
 #define PID_H
 
-class pid{
-
-	float i, d, kp, ki, kd, b, h, y_old, N;
+class pid {
+    // State variables and internal parametersS
+    float i, d, kp, ki, kd, b, h, y_old, N, kt;
+    float last_v; // Control signal before saturation
 
 public:
-	bool anti_windup = false; // Flag para ligar/desligar o anti-windup
-	float last_u = 0;        // Guardamos o último duty cycle para verificar saturação
-	explicit pid(float _h, float _kp=1.0, float _b=1.0, 
-          float _ki=1.0, float _kd=0.0, float _n=10.0);	
-	
-	~pid(){};
-	float compute_control(float r, float y);
+    // Flags for anti-windup; set-point weighting and derivative filter
+    bool anti_windup = true;        
+    bool setpoint_weighting = true; 
+    bool derivative_enabled = true; 
 
-	void housekeep(float r, float y);
+    explicit pid(float _h, float _kp=0.03, float _b=0.2, 
+                 float _ki=0.02, float _kd=0.0, float _n=10.0, float _kt=1.0);	
+    
+    ~pid(){};
 
+    // u(k) computation
+    float compute_control(float r, float y);
 
+    // Update states and applies anti-windup, if active
+    void housekeep(float r, float y, float u);
+
+    // Update gains with the Bumpless Transfer
+    void update_params(float new_kp, float new_ki, float new_kd, float new_b);
 };
 
-inline void pid::housekeep(float r, float y){
-	float e = r-y;
-	//i+= ki*h*e;
-	if (anti_windup) {
-        // Lógica de Clamping: Só integra se não estiver saturado
-        if (!((last_u >= 1.0f && e > 0) || (last_u <= 0.0f && e < 0))) {
-            i += ki*h*e;
-        }
+
+inline void pid::housekeep(float r, float y, float u) {
+    float e = r - y;
+    float bi = ki * h;
+    float ao = kt * h; // Back-calculation gain
+
+    if (anti_windup) {
+        // i = i + bi*(r-y) + ao*(u-v)
+        i = i + bi * e + ao * (u - last_v);
     } else {
-        i += ki*h*e; // Sem anti-windup, integra sempre
+        i = i + bi * e; // Normal integration (without protection)
     }
-	y_old = y;
+    
+    y_old = y;
 }
 
-#endif //PID_H
+#endif

@@ -99,11 +99,9 @@ void processCommand(String cmd, LED& led, LDR& ldr, Box& box, Metrics& metrics, 
         Serial.print("Gain (K): ");
         Serial.println(box.get_gain());
     } 
-    
 
     // MANDATORY COMMANDS
-
-    // -PERFORMANCE METRICS COMMANDS (Table 2)
+    // PERFORMANCE METRICS COMMANDS (Table 2)
     
     // Get average energy consumption 
     else if (cmd.startsWith("g E")) {
@@ -382,10 +380,10 @@ else if (sscanf(cmd.c_str(), "g t %d", &target_id) == 1) {
 }
 
 // Command: "s <x> <i>" -> Start real-time stream
+// <x> can be 'y' (lux) or 'u' (duty cycle)
 // Command 16
 else if (sscanf(cmd.c_str(), "s %c %d", &type, &target_id) == 2) {
     if (target_id == luminaire.getId()) {
-        // Valida se a variável solicitada é 'y' ou 'u'
         if (type == 'y' || type == 'u') {
             luminaire.stream_var = type;
             luminaire.streaming = true;
@@ -398,6 +396,7 @@ else if (sscanf(cmd.c_str(), "s %c %d", &type, &target_id) == 2) {
 }
 
 // Command: "S <x> <i>" -> Stop real-time stream
+// Command 17
 else if (sscanf(cmd.c_str(), "S %c %d", &type, &target_id) == 2) {
     if (target_id == luminaire.getId()) {
         if (type == 'y' || type == 'u') {
@@ -408,6 +407,7 @@ else if (sscanf(cmd.c_str(), "S %c %d", &type, &target_id) == 2) {
 }
 
 // Command: "g b <x> <i>" -> Get last minute buffer
+// Command 18
 else if (sscanf(cmd.c_str(), "g b %c %d", &type, &target_id) == 2) {
     if (target_id == luminaire.getId() && (type == 'y' || type == 'u')) {
         // Resposta formatada: b <x> <i> <val1>, <val2>, ... 
@@ -421,9 +421,6 @@ else if (sscanf(cmd.c_str(), "g b %c %d", &type, &target_id) == 2) {
         Serial.println(); 
     } else Serial.println("err");
 }
-
-
-
     // UNKNOWN COMMAND HANDLING
     else {
         Serial.println("Error: Unknown command");

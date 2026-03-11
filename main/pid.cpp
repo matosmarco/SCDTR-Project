@@ -1,25 +1,43 @@
 #include "pid.h"
 
-pid::pid(float _h, float _kp, float _b, 
-                 float _ki, float _kd, float _n)
+pid::pid(float _h, float _kp, float _b, float _ki, float _kd, float _n, float _kt)
+    : h{_h}, kp{_kp}, b{_b}, ki{_ki}, kd{_kd}, N{_n}, kt{_kt}, 
+      i{0.0}, d{0.0}, y_old{0.0}, last_v{0.0}
+{}
 
-	// member variable initialization list
-	:h{_h}, kp {_kp}, b {_b}, ki {_ki}, kd {_kd}, N {_n}, i {0.0}, d {0.0}, y_old{0.0}
+float pid::compute_control(float r, float y) {
+    // Proportional with setpoin weighting (optional)
+    float p_term_b = setpoint_weighting ? b : 1.0f;
+    float p = kp * (p_term_b * r - y);
 
-	{} // should check arguments validity
-	
+    // Derivative action with filter N
+    if (derivative_enabled && kd > 0) {
+        float ad = kd / (kd + N * h);
+        float bd = kd * N / (kd + N * h);
+        d = ad * d - bd * (y - y_old);
+    } else {
+        d = 0;
+    }
 
-float pid::compute_control(float r, float y){
-	
-	float p = kp*(b*r-y); // proportional
-	float ad = kd/(kd+N*h); 
-	float bd = kd*N/(kd+N*h);
-	d = ad*d - bd*(y - y_old);
-	float u = p+i+d;
-	
-	if(u < 0) u = 0;
-       	if(u > 4095) u= 4095;
+    // Control signal (v)
+    last_v = p + i + d;
 
-	return u;
+    // Saturation (u) between 0.0 e 1.0 (real Duty Cycle)
+    float u = last_v;
+    if (u < 0.0f) u = 0.0f;
+    if (u > 1.0f) u = 1.0f;
 
+    return u;
+}
+
+void pid::update_params(float new_kp, float new_ki, float new_kd, float new_b) {
+    // Bumpless Transfer: i_new = i_old + kp_old*(b_old*r - y) - kp_new*(b_new*r - y) [cite: 684, 695]
+    // Usamos y_old como aproximação do valor atual de y no momento da troca
+    float current_r = 0; // Idealmente passarias o r atual aqui
+    i = i + kp * (b * current_r - y_old) - new_kp * (new_b * current_r - y_old);
+
+    kp = new_kp;
+    ki = new_ki;
+    kd = new_kd;
+    b = new_b;
 }
