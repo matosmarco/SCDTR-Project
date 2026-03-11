@@ -6,7 +6,7 @@ pid::pid(float _h, float _kp, float _b, float _ki, float _kd, float _n, float _k
 {}
 
 float pid::compute_control(float r, float y) {
-    // Proportional with setpoin weighting (optional)
+    // Proportional with se tpoin weighting (optional)
     float p_term_b = setpoint_weighting ? b : 1.0f;
     float p = kp * (p_term_b * r - y);
 
