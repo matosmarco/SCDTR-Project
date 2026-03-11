@@ -5,18 +5,18 @@
 #include "metrics.h"
 #include "pid.h"
 
-// --- Objetos ---
+// Objects 
 LED led;
 LDR ldr;
 Box box;
-Metrics metrics(0.014); 
+Metrics metrics(0.01963); 
 Luminaire luminaire;
 pid pid(0.01);         
 
-// --- Variáveis de Tempo e Buffer ---
+//Time variables and buffer
 unsigned long last_time = 0;
-const unsigned long sample_time = 10; // 10ms = 100Hz [cite: 251, 583]
-String inputBuffer = "";              // Buffer para comandos não-bloqueantes
+const unsigned long sample_time = 10; // 10ms = 100Hz 
+String inputBuffer = "";              // Buffer for non blocking commands
 
 void setup() {
   Serial.begin(115200);
@@ -33,13 +33,13 @@ void setup() {
 }
 
 void loop() {
-  // 1. Processamento de Comandos Serial (Não-Bloqueante) 
+  // Serial processing 
   checkSerial();
 
-  // 2. Temporização do Ciclo de Controlo (Síncrono a 100Hz) [cite: 517, 527]
+  // Ensure sincronization to 100 Hz to the control loop
   unsigned long current_time = millis();
   if (current_time - last_time >= sample_time) {
-    last_time += sample_time; // Mantém a fase do relógio estável
+    last_time += sample_time; 
     runControlLoop(); 
   }
 }
@@ -61,11 +61,13 @@ void checkSerial() {
 }
 
 /**
- * Lógica em tempo real executada a cada 10ms[cite: 251, 295].
+ * Lógica em tempo real executada a cada 10ms.
  */
 void runControlLoop() {
   float y_k = ldr.readLux();
-
+  float K = box.get_gain(); // Identified gain during calibration
+  float d_k = box.get_background(ldr);
+  
   float u_k;
   if (luminaire.feedback_on) {
     u_k = pid.compute_control(luminaire.reference, y_k); 
@@ -75,11 +77,11 @@ void runControlLoop() {
 
   led.setDuty(u_k);
 
-  // Atualização de métricas e PID [cite: 295, 525]
+  // Atualização de métricas e PID 
   pid.housekeep(luminaire.reference, y_k, u_k);
   metrics.update(u_k, y_k, luminaire.reference, 0.01f);
 
-  // Streaming em Tempo Real [cite: 501]
+  // Streaming em Tempo Real
   if (luminaire.streaming) {
     float val = (luminaire.stream_var == 'y') ? y_k : u_k;
     Serial.print("s ");
@@ -89,6 +91,6 @@ void runControlLoop() {
     Serial.print(" ");
     Serial.print(val, 2);
     Serial.print(" ");
-    Serial.println(millis()); // Timestamp em ms [cite: 501]
+    Serial.println(millis()); // Timestamp em ms
   }
 }

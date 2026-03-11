@@ -246,7 +246,7 @@ else if (sscanf(cmd.c_str(), "o %d %c", &target_id, &char_val) == 2) {
             // As you decided, the PID also holds a copy of the reference
             //pid.r = luminaire.reference;
 
-            Serial.println("ack"); // Success response [cite: 657]
+            Serial.println("ack"); // Success response
         } else {
             Serial.println("err"); // Invalid character value
         }
@@ -263,7 +263,7 @@ else if (sscanf(cmd.c_str(), "g o %d", &target_id) == 1) {
         if (luminaire.state == LuminaireState::LOW) s = 'l';
         else if (luminaire.state == LuminaireState::HIGH) s = 'h';
         
-        // Response format: "o <i> <val>" [cite: 657]
+        // Response format: "o <i> <val>"
         Serial.print("o "); Serial.print(target_id); Serial.print(" "); Serial.println(s);
     } else {
         Serial.println("err");
