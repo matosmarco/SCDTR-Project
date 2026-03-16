@@ -25,6 +25,7 @@ public:
 	float reference;
 	float current_u;  // Current Duty cycle (0.0 to 1.0)
 	bool feedback_on = true; // Por defeito, o controlo PID está ligado
+	bool feedforward_on = true;
 	void updateReference();
 	// Getter and Setter for the ID
 	int getId() const;

@@ -1,5 +1,5 @@
 #include "command.h"
-
+extern long max_jitter;
 // Processes incoming serial commands to interact with the system
 void processCommand(String cmd, LED& led, LDR& ldr, Box& box, Metrics& metrics, Luminaire& luminaire, pid& pid) {
     // Remove leading and trailing whitespace to prevent string matching errors
@@ -87,6 +87,7 @@ void processCommand(String cmd, LED& led, LDR& ldr, Box& box, Metrics& metrics, 
         Serial.println(r, 2);
         Serial.print("Illuminance (Lux): ");
         Serial.println(lux, 2);
+        Serial.print("Max Jitter (us): "); Serial.println(max_jitter);
     } 
     // Command: "param"
     // Action: Prints the currently stored calibration parameters
@@ -99,6 +100,30 @@ void processCommand(String cmd, LED& led, LDR& ldr, Box& box, Metrics& metrics, 
         Serial.print("Gain (K): ");
         Serial.println(box.get_gain());
     } 
+
+    // Reset Jitter: "j r"
+    else if (cmd == "j r") {
+        max_jitter = 0;
+        Serial.println("ack");
+    }
+
+    //  Feedforward ON/OFF: "ff <i> <val>"
+    else if (sscanf(cmd.c_str(), "ff %d %f", &target_id, &val) == 2) {
+        if (target_id == luminaire.getId()) {
+            luminaire.feedforward_on = (val > 0.5f);
+            Serial.println("ack");
+        }
+    }
+    // Command: "sb <i>" -> Streaming of Lux (y) and Duty Cycle (u)
+    else if (sscanf(cmd.c_str(), "sb %d", &target_id) == 1) {
+        if (target_id == luminaire.getId()) {
+            luminaire.stream_var = 'b'; // 'b' de 'both'
+            luminaire.streaming = true;
+            Serial.println("ack");
+        } else {
+            Serial.println("err");
+        }
+    }
 
     // MANDATORY COMMANDS
     // PERFORMANCE METRICS COMMANDS (Table 2)
@@ -226,12 +251,18 @@ else if (sscanf(cmd.c_str(), "o %d %c", &target_id, &char_val) == 2) {
         // 2. Map character input to the LuminaireState enum 
         if (char_val == 'o') {
             luminaire.state = LuminaireState::OFF;
+            luminaire.reference = 0; // Update the reference in the Luminaire object
+
         } 
         else if (char_val == 'l') {
             luminaire.state = LuminaireState::LOW;
+            luminaire.reference = box.get_gain()/3; // Update the reference in the Luminaire object
+
         } 
         else if (char_val == 'h') {
             luminaire.state = LuminaireState::HIGH;
+            luminaire.reference = box.get_gain()- 1; // Update the reference in the Luminaire object
+
         } 
         else {
             valid_state = false;
@@ -399,7 +430,7 @@ else if (sscanf(cmd.c_str(), "s %c %d", &type, &target_id) == 2) {
 // Command 17
 else if (sscanf(cmd.c_str(), "S %c %d", &type, &target_id) == 2) {
     if (target_id == luminaire.getId()) {
-        if (type == 'y' || type == 'u') {
+        if (type == 'y' || type == 'u' || type == 'b') {
             luminaire.streaming = false; // Para o envio no loop 
             Serial.println("ack");
         } else Serial.println("err");

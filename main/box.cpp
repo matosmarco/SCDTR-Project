@@ -150,3 +150,7 @@ float Box::get_background(LDR& ldr) {
     backgroundLux = ldr.readLux();
     return backgroundLux;
 }
+
+float Box::fixed_background(LDR& ldr){
+    return backgroundLux;
+}

@@ -12,8 +12,8 @@ public:
     bool setpoint_weighting = true; 
     bool derivative_enabled = true; 
 
-    explicit pid(float _h, float _kp=0.03, float _b=0.2, 
-                 float _ki=0.02, float _kd=0.0, float _n=10.0, float _kt=1.0);	
+    explicit pid(float _h, float _kp=0.05, float _b=0.5, 
+                 float _ki=0.06, float _kd=0.0, float _n=10.0, float _kt=1.0);	
     
     ~pid(){};
 
@@ -24,7 +24,7 @@ public:
     void housekeep(float r, float y, float u);
 
     // Update gains with the Bumpless Transfer
-    void update_params(float new_kp, float new_ki, float new_kd, float new_b);
+    void update_params(float new_kp, float new_ki, float new_kd, float new_b, float current_r);
 };
 
 

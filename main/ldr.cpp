@@ -1,8 +1,12 @@
 #include "ldr.h"
 LDR::LDR(){
 	// Initial parameters of the log function of the sensor (LDR)
-	m = -0.8492; 
+	// LED left
+    m = -0.8492; 
 	b = 5.22; 
+    // LED right
+    //m = -0.8553;
+    //b = 4.91;
 	// Initialization of the buffer (for the filter)
 	bufferIndex = 0;
 	bufferFilled = false;

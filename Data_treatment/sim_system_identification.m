@@ -8,7 +8,6 @@ C = 0.00001; % 10 uF
 Vcc = 3.3;
 T = 0.001; 
 step = 1000;
-
 % Experimental values
 b_calib = 5.22;
 m_calib = -0.8492; 

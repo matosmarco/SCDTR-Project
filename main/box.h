@@ -23,6 +23,7 @@ public:
 	// Get values
 	float get_gain();
 	float get_background(LDR& ldr);
+	float fixed_background(LDR& ldr);
 };
 
 
