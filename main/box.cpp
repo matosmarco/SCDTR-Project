@@ -21,7 +21,7 @@ void Box::identify_static_gain(LED& led, LDR& ldr){
   led.setDuty(0.0);
   delay(2000);
   
-  // FLUSH BUFFER: Deletes previous light readings
+  // Deletes previous light readings
   for(int i = 0; i < MEDIAN_BUFFER_SIZE; i++) ldr.readVoltage();
 
   float l0 = ldr.readLux();

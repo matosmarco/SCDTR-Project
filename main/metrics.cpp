@@ -47,9 +47,7 @@ float Metrics::getInstantaneousPower(float u_k) {
 }
 
 // Returns the value on the position "pos" (0 to 5999)
-// Retorna o valor na posição 'pos' (0 é a mais antiga, 5999 a mais recente)
 float Metrics::getBufferValue(char var, int pos) {
-    // Calcula o índice real no buffer circular partindo da amostra mais antiga
     int index = (head + pos) % BUFFER_SIZE;
     return (var == 'y') ? buffer_y[index] : buffer_u[index];
 }

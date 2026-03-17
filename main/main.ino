@@ -53,25 +53,20 @@ void loop() {
   }
 }
 
-/**
- * Lê caracteres da porta Serial sem bloquear o loop principal.
- */
+
 void checkSerial() {
   while (Serial.available() > 0) {
     char c = Serial.read();
     if (c == '\n') {
-      // Quando recebe o fim de linha, processa o comando acumulado
       processCommand(inputBuffer, led, ldr, box, metrics, luminaire, pid);
-      inputBuffer = ""; // Limpa o buffer para o próximo comando
+      inputBuffer = "";
     } else if (c != '\r') {
-      inputBuffer += c; // Acumula caracteres
+      inputBuffer += c;
     }
   }
 }
 
-/**
- * Lógica em tempo real executada a cada 10ms.
- */
+
 void runControlLoop() {
   // Jitter monitorization
   unsigned long current_micros = micros();
@@ -114,10 +109,6 @@ void runControlLoop() {
   led.setDuty(u_k);
 
   // Metrics (Energy (J); Visibility error (Lux) and Flicker (s^-1))
-  // delta_t = 0.01s (10ms)
-
-  //float lux_estimated = (K*u_k) + d_k; // Estimated illuminance 
-  //metrics.update(u_k, lux_estimated, luminaire.reference, 0.01f);
   metrics.update(u_k, y_k, luminaire.reference, 0.01f);
   // Streaming in real time ('s' command, defined in command.cpp)
 // Streaming em tempo real (Comando 's' ou 'sb')
@@ -139,8 +130,9 @@ if (luminaire.streaming) {
         Serial.print(val, 4);
     }
 
-    Serial.print(" "); // Espaço vital antes do tempo
-    Serial.println(millis()); // println garante o \n para o Python
+    Serial.print(" ");
+    //Serial.println(millis());
+    Serial.println(micros());
   }
   
   }

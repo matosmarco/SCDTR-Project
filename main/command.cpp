@@ -107,6 +107,62 @@ void processCommand(String cmd, LED& led, LDR& ldr, Box& box, Metrics& metrics, 
         Serial.println("ack");
     }
 
+    else if (sscanf(cmd.c_str(), "p %d %f", &target_id, &val) == 2) {
+        if (target_id == luminaire.getId()) {
+            if (val >= 0.0f && val <= 100.0f) {
+                luminaire.current_u = val/100.0;
+                led.setPercentage(val);
+                Serial.println("ack");
+            } else {
+                Serial.println("err"); // Valor fora dos limites
+            }
+        } else {
+            Serial.println("err"); // Roteamento futuro para rede CAN
+        }
+    }
+    else if (sscanf(cmd.c_str(), "w %d %f", &target_id, &val) == 2) {
+        if (target_id == luminaire.getId()) {
+            if (val >= 0.0f && val <= 4095.0f) {
+                luminaire.current_u = val/(ADC_MAX-1);
+                led.setRaw(val);
+                Serial.println("ack");
+            } else {
+                Serial.println("err"); // Valor fora dos limites
+            }
+        } else {
+            Serial.println("err"); // Roteamento futuro para rede CAN
+        }
+    }
+
+// --- GET Duty Cycle: g d <id> ---
+    else if (sscanf(cmd.c_str(), "g d %d", &target_id) == 1) {
+        if (target_id == luminaire.getId()) {
+            Serial.print("d "); Serial.print(target_id); Serial.print(" ");
+            Serial.println(luminaire.current_u, 4); 
+        } else {
+            Serial.println("err"); // No roteamento futuro, isto enviaria via CAN
+        }
+    }
+
+    // Get Percentage: g p <id> 
+    else if (sscanf(cmd.c_str(), "g p %d", &target_id) == 1) {
+        if (target_id == luminaire.getId()) {
+            Serial.print("p "); Serial.print(target_id); Serial.print(" ");
+            Serial.println(luminaire.current_u * 100.0f, 2); 
+        } else {
+            Serial.println("err");
+        }
+    }
+
+    // Get Raw PWM: g w <id>
+    else if (sscanf(cmd.c_str(), "g w %d", &target_id) == 1) {
+        if (target_id == luminaire.getId()) {
+            Serial.print("w "); Serial.print(target_id); Serial.print(" ");
+            Serial.println((int)(luminaire.current_u * 4095)); 
+        } else {
+            Serial.println("err");
+        }
+    }
     //  Feedforward ON/OFF: "ff <i> <val>"
     else if (sscanf(cmd.c_str(), "ff %d %f", &target_id, &val) == 2) {
         if (target_id == luminaire.getId()) {
@@ -237,7 +293,6 @@ else if (sscanf(cmd.c_str(), "g v %d", &target_id) == 1) {
         // Voltage reading
         Serial.println(ldr.readVoltage(), 4); 
     } else {
-        // Erro se o ID não for o deste nó (relevante para a Fase 2) 
         Serial.println("err"); 
     }
 }
@@ -256,12 +311,12 @@ else if (sscanf(cmd.c_str(), "o %d %c", &target_id, &char_val) == 2) {
         } 
         else if (char_val == 'l') {
             luminaire.state = LuminaireState::LOW;
-            luminaire.reference = box.get_gain()/3; // Update the reference in the Luminaire object
+            luminaire.reference = 15; // Update the reference in the Luminaire object
 
         } 
         else if (char_val == 'h') {
             luminaire.state = LuminaireState::HIGH;
-            luminaire.reference = box.get_gain()- 1; // Update the reference in the Luminaire object
+            luminaire.reference = 30; // Update the reference in the Luminaire object
 
         } 
         else {
@@ -269,14 +324,6 @@ else if (sscanf(cmd.c_str(), "o %d %c", &target_id, &char_val) == 2) {
         }
 
         if (valid_state) {
-            // 3. Update the reference inside the Luminaire object 
-            // This sets reference to 0.0, low_bound, or high_bound 
-            luminaire.updateReference();
-
-            // 4. Synchronize the PID reference variable
-            // As you decided, the PID also holds a copy of the reference
-            //pid.r = luminaire.reference;
-
             Serial.println("ack"); // Success response
         } else {
             Serial.println("err"); // Invalid character value
@@ -332,11 +379,9 @@ else if (sscanf(cmd.c_str(), "g a %d", &target_id) == 1) {
 // Command: "f <i> <val>" -> Set feedback control on/off
 // Command 11
 else if (sscanf(cmd.c_str(), "f %d %f", &target_id, &val) == 2) {
-    // 1. Verifica se o ID é o desta luminária
     if (target_id == luminaire.getId()) {
-        // 2. Valida se o valor é 0 ou 1
         if (val == 0.0f || val == 1.0f) {
-            luminaire.feedback_on = (val > 0.5f); // Assume que adicionaste esta flag na classe Luminaire
+            luminaire.feedback_on = (val > 0.5f);
             Serial.println("ack"); 
         } else {
             Serial.println("err"); 
@@ -363,16 +408,12 @@ else if (sscanf(cmd.c_str(), "g f %d", &target_id) == 1) {
 // Command: "g d <i>" -> Get current external illuminance (background)
 // Command 13
 else if (sscanf(cmd.c_str(), "g d %d", &target_id) == 1) {
-    // 1. Verifica se o ID solicitado é o desta luminária
     if (target_id == luminaire.getId()) {
-        // 2. Resposta no formato: "d <i> <val>"
         Serial.print("d "); 
         Serial.print(target_id); 
         Serial.print(" "); 
-        // 3. Obtém o valor guardado no objeto box
         Serial.println(box.get_background(ldr), 2); 
     } else {
-        // ID não corresponde a este nó
         Serial.println("err"); 
     }
 }
@@ -381,7 +422,6 @@ else if (sscanf(cmd.c_str(), "g d %d", &target_id) == 1) {
 // Command 14
 else if (sscanf(cmd.c_str(), "g p %d", &target_id) == 1) {
     if (target_id == luminaire.getId()) {
-        // Obtém a potência diretamente da classe Metrics
         float instant_power = metrics.getInstantaneousPower(luminaire.current_u);
 
         Serial.print("p "); 
@@ -395,16 +435,13 @@ else if (sscanf(cmd.c_str(), "g p %d", &target_id) == 1) {
 
 // Command: "g t <i>" -> Get elapsed time since last restart
 else if (sscanf(cmd.c_str(), "g t %d", &target_id) == 1) {
-    // 1. Verifica se o ID solicitado corresponde a esta luminária
     if (target_id == luminaire.getId()) {
-        // 2. Calcula o tempo decorrido em segundos
         float seconds = millis() / 1000.0f;
 
-        // 3. Resposta no formato: "t <i> <val>"
         Serial.print("t "); 
         Serial.print(target_id); 
         Serial.print(" "); 
-        Serial.println(seconds, 3); // Três casas decimais para precisão de milissegundos
+        Serial.println(seconds, 3);
     } else {
         Serial.println("err"); 
     }
@@ -431,7 +468,7 @@ else if (sscanf(cmd.c_str(), "s %c %d", &type, &target_id) == 2) {
 else if (sscanf(cmd.c_str(), "S %c %d", &type, &target_id) == 2) {
     if (target_id == luminaire.getId()) {
         if (type == 'y' || type == 'u' || type == 'b') {
-            luminaire.streaming = false; // Para o envio no loop 
+            luminaire.streaming = false;
             Serial.println("ack");
         } else Serial.println("err");
     } else Serial.println("err");
@@ -441,7 +478,6 @@ else if (sscanf(cmd.c_str(), "S %c %d", &type, &target_id) == 2) {
 // Command 18
 else if (sscanf(cmd.c_str(), "g b %c %d", &type, &target_id) == 2) {
     if (target_id == luminaire.getId() && (type == 'y' || type == 'u')) {
-        // Resposta formatada: b <x> <i> <val1>, <val2>, ... 
         Serial.print("b "); Serial.print(type); Serial.print(" ");
         Serial.print(target_id); Serial.print(" ");
         
@@ -455,6 +491,5 @@ else if (sscanf(cmd.c_str(), "g b %c %d", &type, &target_id) == 2) {
     // UNKNOWN COMMAND HANDLING
     else {
         Serial.println("Error: Unknown command");
-	//TODO: write usage
     }
 }

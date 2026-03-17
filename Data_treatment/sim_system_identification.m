@@ -66,6 +66,6 @@ plot(t_exp, v_exp, 'k.', 'MarkerSize', 6); hold on;
 plot(t_sim, v, 'r-', 'LineWidth', 2);
 
 title('ADC Voltage - Simulator vs Real System');
-xlabel('t [sec]'); ylabel('v [volt]');
+xlabel('Time [seconds]'); ylabel('Voltage [V]');
 legend('Experimental (Real Data)', 'Theoretical Model (Calibrated)', 'Location', 'best');
 grid on;

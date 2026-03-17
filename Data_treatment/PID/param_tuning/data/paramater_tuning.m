@@ -12,8 +12,8 @@ b  = 0.5;
 
 % --- FILE LOADING ---
 %filename = 'results_kp001.txt';
-filename = 'kp005.txt';
-%filename = 'results_kp01.txt';
+%filename = 'results_kp005.txt';
+filename = 'results_kp01.txt';
 %filename = 'results_kp005_ki001.txt';
 %filename = 'results_kp005_ki005.txt';
 %filename = 'results_kp005_ki01.txt';
@@ -102,9 +102,9 @@ plot(time_s, v_error, 'm-', 'LineWidth', 1.5);
 yline(avg_V, 'r--', 'LineWidth', 1.5); 
 
 % Defines a little offset (e.g.: 2% of the graph scale)
-offset = max(ylim) * 0.03; 
+offset = max(ylim) * 0.05; 
 
-text(time_s(end)*0.7, avg_V + offset, ...
+text(time_s(end)*0.7 + 3, avg_V + offset, ...
     ['Average V = ', num2str(avg_V, '%.2f'), ' LUX'], ...
     'Color', 'r', 'FontWeight', 'bold', 'FontSize', 10);
 % Formatting

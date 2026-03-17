@@ -20,19 +20,14 @@ float pid::compute_control(float r, float y) {
     }
 
     // Control signal (v)
-    last_v = p + i + d;
+    last_v = p + i + d; 
 
-    // Saturation (u) between 0.0 e 1.0 (real Duty Cycle)
     float u = last_v;
-    //if (u < 0.0f) u = 0.0f;
-    //if (u > 1.0f) u = 1.0f;
-
     return u;
 }
 
 void pid::update_params(float new_kp, float new_ki, float new_kd, float new_b, float current_r) {
     // Bumpless Transfer: i_new = i_old + kp_old*(b_old*r - y) - kp_new*(b_new*r - y)
-    // Usamos y_old como aproximação do valor atual de y no momento da troca
     i = i + kp * (b * current_r - y_old) - new_kp * (new_b * current_r - y_old);
 
     kp = new_kp;

@@ -3,12 +3,7 @@
 Luminaire::Luminaire(): 
 
 node_id{0}, reference{0.0}, current_u{0.0}, low_bound{0.0}, high_bound{50.0},
-    state{LuminaireState::OFF}, feedback_on{true} // Inicialização
-	//state = LuminaireState::OFF;
-	//low_bound = 10.0;
-	//high_bound = 50.0;
-	//reference = 0.0;
-	//current_u = 0.0;
+    state{LuminaireState::OFF}, feedback_on{true} // Init
 {}
 
 // Reference state update

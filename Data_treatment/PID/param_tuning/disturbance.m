@@ -6,17 +6,21 @@
 clear all; close all; clc;
 
 % --- PID PARAMETERS (Update manually for your report) ---
-Kp = 0.05; Ki = 0.06; b = 0.8; 
+Kp = 0.05; Ki = 0.06; b = 0.5; 
 
 % --- DATA LOADING ---
 fprintf('Loading log files...\n');
 
 % Load Lamp 0 (The controlled system)
 %data0_raw = read_lamp_log('pid_data.txt', 0);
-data0_raw = read_lamp_log('pid_video.txt', 0);
+%data0_raw = read_lamp_log('pid_video.txt', 0);
+data0_raw = read_lamp_log('pid_data_2.txt', 0);
+
 % Load Lamp 1 (The external disturbance)
 %data1_raw = read_lamp_log('peturb.txt', 1);
-data1_raw = read_lamp_log('peturb_video.txt', 0);
+%data1_raw = read_lamp_log('peturb_video.txt', 0);
+data1_raw = read_lamp_log('peturb_2.txt', 0);
+
 % --- TIME SYNCHRONIZATION ---
 % Synchronize T=0 to the first timestamp of the main PID file
 t_start = data0_raw(1,4); 
@@ -65,7 +69,7 @@ v_error = max(0, r0 - y0);
 avg_V = mean(v_error);
 max_dev = max(abs(y0 - r0));
 
-fprintf('\n--- Performance Summary (English) ---\n');
+fprintf('\n--- Performance Summary---\n');
 fprintf('Average Visibility Error (V): %.4f Lux\n', avg_V);
 fprintf('Maximum Deviation from Setpoint: %.4f Lux\n', max_dev);
 fprintf('Total Experiment Duration: %.2f seconds\n', t0(end));
