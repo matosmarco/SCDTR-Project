@@ -1,7 +1,7 @@
 #include "command.h"
 extern long max_jitter;
 // Processes incoming serial commands to interact with the system
-void processCommand(String cmd, LED& led, LDR& ldr, Box& box, Metrics& metrics, Luminaire& luminaire, pid& pid) {
+void processCommand(String cmd, LED& led, LDR& ldr, Box& box, Metrics& metrics, Luminaire& luminaire, pid& pid, CanNetwork& can_net) {
     // Remove leading and trailing whitespace to prevent string matching errors
     cmd.trim();
     
@@ -16,7 +16,7 @@ void processCommand(String cmd, LED& led, LDR& ldr, Box& box, Metrics& metrics, 
     // Command: "calibb" 
     // Action: Calibrates the 'b' parameter of the LDR assuming a known 500 Lux reference
     if (cmd == "calibb") {
-        ldr.calibrate_b(500);	
+        ldr.calibrate_b(500);   
     } 
     // Command: "calibm" 
     // Action: Calibrates the 'm' (slope) parameter of the LDR by sweeping the LED duty cycle
@@ -117,7 +117,7 @@ void processCommand(String cmd, LED& led, LDR& ldr, Box& box, Metrics& metrics, 
                 Serial.println("err"); // Valor fora dos limites
             }
         } else {
-            Serial.println("err"); // Roteamento futuro para rede CAN
+            routeCommandToCAN(cmd, luminaire.getId(), can_net);
         }
     }
     else if (sscanf(cmd.c_str(), "w %d %f", &target_id, &val) == 2) {
@@ -130,7 +130,7 @@ void processCommand(String cmd, LED& led, LDR& ldr, Box& box, Metrics& metrics, 
                 Serial.println("err"); // Valor fora dos limites
             }
         } else {
-            Serial.println("err"); // Roteamento futuro para rede CAN
+            routeCommandToCAN(cmd, luminaire.getId(), can_net);
         }
     }
 
@@ -168,6 +168,8 @@ void processCommand(String cmd, LED& led, LDR& ldr, Box& box, Metrics& metrics, 
         if (target_id == luminaire.getId()) {
             luminaire.feedforward_on = (val > 0.5f);
             Serial.println("ack");
+        } else {
+            routeCommandToCAN(cmd, luminaire.getId(), can_net);
         }
     }
     // Command: "sb <i>" -> Streaming of Lux (y) and Duty Cycle (u)
@@ -177,7 +179,7 @@ void processCommand(String cmd, LED& led, LDR& ldr, Box& box, Metrics& metrics, 
             luminaire.streaming = true;
             Serial.println("ack");
         } else {
-            Serial.println("err");
+            routeCommandToCAN(cmd, luminaire.getId(), can_net);
         }
     }
 
@@ -212,7 +214,7 @@ void processCommand(String cmd, LED& led, LDR& ldr, Box& box, Metrics& metrics, 
                 Serial.println("err"); // Valor fora dos limites
             }
         } else {
-            Serial.println("err"); // Roteamento futuro para rede CAN
+            routeCommandToCAN(cmd, luminaire.getId(), can_net);
         }
     }
     // "g u <i>" -> Get current duty cycle 
@@ -242,8 +244,7 @@ else if (sscanf(cmd.c_str(), "r %d %f", &target_id, &val) == 2) {
             Serial.println("err");      // Invalid value 
         }
     } else {
-        // In Phase 2, this would be routed via CAN-BUS to the correct node
-        Serial.println("err");          // ID mismatch for this node 
+        routeCommandToCAN(cmd, luminaire.getId(), can_net);
     }
 }
 
@@ -329,7 +330,7 @@ else if (sscanf(cmd.c_str(), "o %d %c", &target_id, &char_val) == 2) {
             Serial.println("err"); // Invalid character value
         }
     } else {
-        Serial.println("err"); // ID mismatch
+        routeCommandToCAN(cmd, luminaire.getId(), can_net);
     }
 }
 
@@ -359,7 +360,7 @@ else if (sscanf(cmd.c_str(), "a %d %f", &target_id, &val) == 2) {
             Serial.println("err");
         }
     } else {
-        Serial.println("err");
+        routeCommandToCAN(cmd, luminaire.getId(), can_net);
     }
 }
 
@@ -387,7 +388,7 @@ else if (sscanf(cmd.c_str(), "f %d %f", &target_id, &val) == 2) {
             Serial.println("err"); 
         }
     } else {
-        Serial.println("err"); 
+        routeCommandToCAN(cmd, luminaire.getId(), can_net);
     }
 }
 
@@ -455,11 +456,12 @@ else if (sscanf(cmd.c_str(), "s %c %d", &type, &target_id) == 2) {
         if (type == 'y' || type == 'u') {
             luminaire.stream_var = type;
             luminaire.streaming = true;
+            Serial.println("ack");
         } else {
             Serial.println("err");
         }
     } else {
-        Serial.println("err");
+        routeCommandToCAN(cmd, luminaire.getId(), can_net);
     }
 }
 
@@ -471,7 +473,9 @@ else if (sscanf(cmd.c_str(), "S %c %d", &type, &target_id) == 2) {
             luminaire.streaming = false;
             Serial.println("ack");
         } else Serial.println("err");
-    } else Serial.println("err");
+    } else {
+        routeCommandToCAN(cmd, luminaire.getId(), can_net);
+    }
 }
 
 // Command: "g b <x> <i>" -> Get last minute buffer

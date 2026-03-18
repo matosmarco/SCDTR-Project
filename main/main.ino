@@ -4,6 +4,8 @@
 #include "command.h"
 #include "metrics.h"
 #include "pid.h"
+#include "can_network.h"
+#include "pico/unique_id.h"
 
 // Objects 
 LED led;
@@ -11,7 +13,8 @@ LDR ldr;
 Box box;
 Metrics metrics(0.01963); 
 Luminaire luminaire;
-pid pid(0.01);         
+pid pid(0.01);  
+CanNetwork can_net(17);       
 
 //Time variables and buffer
 unsigned long last_time = 0;
@@ -22,7 +25,11 @@ String inputBuffer = "";              // Buffer for non blocking commands
 unsigned long last_micros = 0; // Timestamp of the last execution
 long max_jitter = 0;           // Maximum deviation in microseconds
 
-
+uint8_t get_pico_id() {
+    pico_unique_board_id_t board_id;
+    pico_get_unique_board_id(&board_id);
+    return board_id.id[7]; 
+}
 
 void setup() {
   Serial.begin(115200);
@@ -31,10 +38,13 @@ void setup() {
   analogReadResolution(12); 
   led.initPWM();            
 
-  luminaire.setId(0);
-  //luminaire.setId(1);
+  // Network Boot: Dynamic ID assignment
+  uint8_t my_id = get_pico_id();
+  luminaire.setId(my_id);
+  can_net.begin();
 
-  Serial.println("System Initializing...");
+  Serial.print("System Initializing... Node ID: ");
+  Serial.println(my_id);
   box.identify_static_gain(led, ldr);
   
   Serial.println("System Ready");
@@ -44,6 +54,9 @@ void setup() {
 void loop() {
   // Serial processing 
   checkSerial();
+
+  // CAN Bus processing
+  checkCanBus();
 
   // Ensure sincronization to 100 Hz to the control loop
   unsigned long current_time = millis();
@@ -58,12 +71,44 @@ void checkSerial() {
   while (Serial.available() > 0) {
     char c = Serial.read();
     if (c == '\n') {
-      processCommand(inputBuffer, led, ldr, box, metrics, luminaire, pid);
+      // Pass the CAN network to the command processor
+      processCommand(inputBuffer, led, ldr, box, metrics, luminaire, pid, can_net);
       inputBuffer = "";
     } else if (c != '\r') {
       inputBuffer += c;
     }
   }
+}
+
+// Process incoming CAN messages
+void checkCanBus() {
+    CanMessage rxMsg;
+    if (can_net.receiveMessage(rxMsg)) {
+        
+        // Command targeted to this node or broadcast (255)
+        if (rxMsg.type == 'C' && (rxMsg.target_id == luminaire.getId() || rxMsg.target_id == 255)) {
+            if (rxMsg.variable == 'r') {
+                luminaire.reference = rxMsg.value;
+            } else if (rxMsg.variable == 'u') {
+                luminaire.current_u = rxMsg.value;
+                led.setDuty(rxMsg.value);
+            } else if (rxMsg.variable == 'f') {
+                luminaire.feedback_on = (rxMsg.value > 0.5f);
+            }
+        }
+        
+        // Hub Function: route telemetry from the network to the Serial Monitor
+        else if (rxMsg.type == 'T') {
+            Serial.print("s ");
+            Serial.print(rxMsg.variable);
+            Serial.print(" ");
+            Serial.print(rxMsg.sender_id);
+            Serial.print(" ");
+            Serial.print(rxMsg.value, 4);
+            Serial.print(" ");
+            Serial.println(micros());
+        }
+    }
 }
 
 
@@ -119,6 +164,8 @@ if (luminaire.streaming) {
     Serial.print(luminaire.getId()); // ID 0
     Serial.print(" "); // Espaço vital
 
+    float val = 0.0f; // Variable to hold the value for CAN transmission
+
     if (luminaire.stream_var == 'b') {
         Serial.print(y_k, 2);
         Serial.print(" "); // Espaço vital
@@ -126,13 +173,24 @@ if (luminaire.streaming) {
         Serial.print(" "); // Espaço vital
         Serial.print(luminaire.reference, 2); // Current target (r) 
     } else {
-        float val = (luminaire.stream_var == 'y') ? y_k : u_k;
+        val = (luminaire.stream_var == 'y') ? y_k : u_k;
         Serial.print(val, 4);
     }
 
     Serial.print(" ");
     //Serial.println(millis());
     Serial.println(micros());
+
+    // Broadcast telemetry to the CAN network (except for 'b' which is dual-variable)
+    if (luminaire.stream_var != 'b') {
+        CanMessage txMsg;
+        txMsg.type = 'T'; // Telemetry
+        txMsg.sender_id = luminaire.getId();
+        txMsg.target_id = 255; // Broadcast
+        txMsg.variable = luminaire.stream_var;
+        txMsg.value = val;
+        can_net.sendMessage(txMsg);
+    }
   }
   
   }
