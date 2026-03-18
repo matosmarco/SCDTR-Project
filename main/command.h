@@ -11,6 +11,5 @@
 #include "can_network.h" // Added CAN
 #include "hub_router.h"  // Added Router
 // Global function to process commands
-void processCommand(String cmd, LED& led, LDR& ldr, Box& box, Metrics& metrics, Luminaire& luminaire, pid& pid);
-
+void processCommand(String cmd, LED& led, LDR& ldr, Box& box, Metrics& metrics, Luminaire& luminaire, pid& pid, CanNetwork& can_net);
 #endif
