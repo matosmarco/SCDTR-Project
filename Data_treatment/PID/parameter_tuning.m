@@ -6,9 +6,9 @@ clear all; close all; clc;
 
 % --- PID PARAMETERS (Update manually for documentation) ---
 Kp = 0.05; 
-Ki = 0.06;
+Ki = 0.00;
 Kd = 0.00;
-b  = 0.5;
+b  = 1.0;
 
 % --- FILE LOADING ---
 %filename = 'results_kp001.txt';

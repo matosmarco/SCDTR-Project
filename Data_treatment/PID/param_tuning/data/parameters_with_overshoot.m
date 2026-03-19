@@ -5,7 +5,7 @@ clear all; close all; clc;
 Kp = 0.05; Ki = 0.06; Kd = 0.00; b = 0.5;
 
 % --- FILE LOADING ---
-filename = 'results_kp01.txt';
+filename = 'results_kp005_ki01_b07_ff_on.txt';
 if ~exist(filename, 'file'), error('Error: File %s not found.', filename); end
 fid = fopen(filename, 'r');
 data = [];
@@ -96,5 +96,10 @@ xlabel('Time [s]');
 ylim([-0.05 1.05]);
 
 fprintf('--- Noise-Robust Metrics ---\n');
-fprintf('Overshoot: %.2f%%\n', overshoot_pct);
-fprintf('Settling Time: %.3f s\n', settling_time);
+fprintf('Overshoot: %.5f%%\n', overshoot_pct);
+fprintf('Settling Time: %.5f s\n', settling_time);
+
+
+overshoot_pct = 100 * (peak_y - target_r) / abs(target_r - initial_r);
+% Real overshoot
+disp(overshoot_pct)

@@ -131,8 +131,8 @@ if (luminaire.streaming) {
     }
 
     Serial.print(" ");
-    //Serial.println(millis());
-    Serial.println(micros());
+    Serial.println(millis());
+    //Serial.println(micros());
   }
   
   }
