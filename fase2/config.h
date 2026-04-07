@@ -17,7 +17,7 @@ static const int MEDIAN_BUFFER_SIZE = 11; // odd number makes it easier to compu
 
 // MAX_SIZE of the message queue
 #define QUEUE_SIZE 10
-
+#define MAX_NODES 10
 // CAN PROTOCOL (Exactly 8 Bytes)
 // The __attribute__((packed)) ensures the compiler does not add invisible padding.
 // This guarantees the struct takes exactly 8 bytes to fit inside a CAN bus frame.

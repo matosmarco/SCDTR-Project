@@ -2,12 +2,13 @@
 #include <FreeRTOS.h>
 #include <queue.h>
 #include "config.h"
+#include "calibrationMatrix.h"
 
 extern long max_jitter;
 extern QueueHandle_t canTxQueue;     // Access to the TX queue managed in main.ino
 extern float global_energy_cost;     // Access to the global energy cost variable
 extern bool net_streaming;
-
+extern CalibrationMatrix myMatrix;
 // Processes incoming serial commands to interact with the system
 void processCommand(String cmd, LED& led, LDR& ldr, Box& box, Metrics& metrics, Luminaire& luminaire, pid& pid) {
     // Remove leading and trailing whitespace
@@ -175,7 +176,18 @@ void processCommand(String cmd, LED& led, LDR& ldr, Box& box, Metrics& metrics, 
             Serial.println("ack");
         } else Serial.println("err");
     }
-
+    else if (sscanf(cmd.c_str(), "g k %d", &target_id) == 1) {
+        if (target_id == luminaire.getId()) {
+            // Se o pedido for para o próprio nó, imprime diretamente o vetor local
+            Serial.printf("k %d ", target_id);
+            int n = myMatrix.getNumNodes();
+            const uint8_t* nodes = myMatrix.getNodesArray();
+            for (int i = 0; i < n; i++) {
+                Serial.printf("%d:%.4f ", nodes[i], myMatrix.getGain(nodes[i]));
+            }
+            Serial.println();
+        } else Serial.println("err");
+    }
     // Mandatory commands (Tables 1, 2, and 3)
     
     // Table 2 - Metrics (Fixed with dynamic target_id)
