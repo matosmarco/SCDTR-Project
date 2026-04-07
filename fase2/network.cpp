@@ -48,9 +48,13 @@ extern char net_buffer_var;
 extern int net_buffer_index;
 extern uint8_t net_buffer_dest;
 
+
+extern unsigned long last_seen_time[256];
     
 float global_K_matrix[MAX_NODES][MAX_NODES] = {0.0f}; // Matrix to store all gains (1 to MAX_NODES)
 int expected_k_elements = 0; // variable to flag the number of elements to be sent
+
+
 
 // Functions
 void checkSerial() {
@@ -94,25 +98,34 @@ void processNetworkMessages() {
 
   // Processing messages by priority
   for (int i = 0; i < actualCount; i++) {
-    ProtocolMsg_t msgIn = msgBuffer[i];
+     ProtocolMsg_t msgIn = msgBuffer[i];
 
-    // Wake-up message (entering in the network)
-    if (msgIn.cmd == 'w' || msgIn.cmd == 'W') {
-        myMatrix.addNode(msgIn.src_id);
-        
-        if (msgIn.cmd == 'w') {
+    // ATUALIZA O RELÓGIO (Ouvimos o nó, ele está vivo!)
+    last_seen_time[msgIn.src_id] = xTaskGetTickCount() * portTICK_PERIOD_MS;
+
+    //Dynamic management of the topology and isHere (H)('w', 'W', 'H')
+    if (msgIn.cmd == 'H' || msgIn.cmd == 'w' || msgIn.cmd == 'W') {
+        if (myMatrix.findNodeIndex(msgIn.src_id) == -1) {
+            // É UM NÓ NOVO NA REDE!
+            myMatrix.addNode(msgIn.src_id);
+            Serial.printf("\n>>> TOPOLOGY: Node %d discovered!\n", msgIn.src_id);
+            
+            // Avisar a FSM que há um elemento novo na sala para forçar recalibração
             if (calibTaskHandle != NULL) {
-                xTaskNotifyGive(calibTaskHandle); 
                 xTaskNotify(calibTaskHandle, EVENT_NETWORK_CHANGE, eSetBits);
             }
+        }
+        
+        // Se ele mandou um WakeUp ('w'), respondemos com 'W' para ele saber que nós existimos
+        if (msgIn.cmd == 'w') {
             ProtocolMsg_t replyMsg = {node_address, msgIn.src_id, 'W', ' ', 0.0f};
             xQueueSend(canTxQueue, &replyMsg, 0);
         }
     }
-
     // Passive calibration and token ring ('c')
     else if (msgIn.cmd == 'c') {
         if (msgIn.subcmd == '1' && msgIn.src_id != node_address) {
+            vTaskDelay(pdMS_TO_TICKS(2000));
             float y_total = ldr.readLux();
             float d_k = box.fixed_background(ldr); 
             float k_ij = y_total - d_k;
@@ -123,6 +136,7 @@ void processNetworkMessages() {
         } 
         else if (msgIn.subcmd == '0' && msgIn.src_id != node_address) {
             if (calibTaskHandle != NULL) {
+                vTaskDelay(pdMS_TO_TICKS(2000));
                 xTaskNotify(calibTaskHandle, EVENT_TOKEN_DONE, eSetBits);
             }
         }
@@ -145,9 +159,7 @@ void processNetworkMessages() {
      }
 
 
-    // ---------------------------------------------------------
-    // D. COMANDOS GERAIS DA REDE E GUIÃO
-    // ---------------------------------------------------------
+    // General commands of the network
     else if (msgIn.cmd == 'R') {    
       metrics.reset();
       box.calibrate_background(led, ldr);
@@ -164,9 +176,7 @@ void processNetworkMessages() {
     else if (msgIn.cmd == 'O') luminaire.high_bound = msgIn.value;  
     else if (msgIn.cmd == 'C') global_energy_cost = msgIn.value;
 
-    // ---------------------------------------------------------
     // E. GET REQUESTS ('g') & ANSWERS ('A')
-    // ---------------------------------------------------------
     else if (msgIn.cmd == 'g') {
       
       // -- RESPOSTA AO PEDIDO DE VETOR K ('k') --
@@ -202,7 +212,7 @@ void processNetworkMessages() {
           else if (msgIn.subcmd == 'v') response.value = ldr.readVoltage();
           else if (msgIn.subcmd == 'd') response.value = box.get_background(ldr);
           else if (msgIn.subcmd == 'p') response.value = metrics.getInstantaneousPower(luminaire.current_u);
-          else if (msgIn.subcmd == 't') response.value = millis() / 1000.0f;
+          else if (msgIn.subcmd == 't') response.value = (xTaskGetTickCount() * portTICK_PERIOD_MS) / 1000.0f;          
           else if (msgIn.subcmd == 'E') response.value = metrics.energy;
           else if (msgIn.subcmd == 'V') response.value = metrics.getAverageVisibility();
           else if (msgIn.subcmd == 'F') response.value = metrics.flicker; 
@@ -224,12 +234,9 @@ void processNetworkMessages() {
       }
     }
     
-    // ---------------------------------------------------------
     // PROCESSAMENTO DE RESPOSTAS NORMAIS ('A')
-    // ---------------------------------------------------------
     else if (msgIn.cmd == 'A') {
-      Serial.println("\n==================================");
-      Serial.print(">>> RECEIVED FINAL ANSWER: ");
+      Serial.print("Received final answer: ");
       if (msgIn.subcmd == 'o') {
           Serial.printf("%c %d %c", msgIn.subcmd, msgIn.src_id, (char)msgIn.value);
       } else {
@@ -250,7 +257,7 @@ void processNetworkMessages() {
         net_streaming = false;
     }
     else if (msgIn.cmd == 'D') { 
-        Serial.printf("s %c %d %.4f %lu\n", msgIn.subcmd, msgIn.src_id, msgIn.value, millis());
+    Serial.printf("s %c %d %.4f %lu\n", msgIn.subcmd, msgIn.src_id, msgIn.value, (unsigned long)(xTaskGetTickCount() * portTICK_PERIOD_MS));    
     }
     
     else if (msgIn.cmd == 'b') { 
@@ -280,44 +287,58 @@ void sendMessage() {
     canMsgTx.can_id = node_address;
     canMsgTx.can_dlc = 8; 
     
-    canMsgTx.data[1] = msgOut.dest_id;
-    canMsgTx.data[0] = msgOut.src_id;
+    // CORREÇÃO: Ordem exata da struct ProtocolMsg_t
+    canMsgTx.data[0] = msgOut.src_id;   // Sender
+    canMsgTx.data[1] = msgOut.dest_id;  // Target
     canMsgTx.data[2] = msgOut.cmd;
     canMsgTx.data[3] = msgOut.subcmd;
-    
     memcpy(&canMsgTx.data[4], &msgOut.value, sizeof(float));
+    
     err = can0.sendMessage(&canMsgTx);
 
-    if (err == MCP2515::ERROR_OK) {
-        if (msgOut.dest_id == 255) {
-            Serial.printf("[CAN TX] Successfully BROADCASTED '%c %c' to the network\n", msgOut.cmd, msgOut.subcmd);
-        } else {
-            Serial.printf("[CAN TX] Successfully sent '%c %c' to node %d\n", msgOut.cmd, msgOut.subcmd, msgOut.dest_id);
+    // SILENCIADOR DE SPAM (Ignora erro de buffer cheio se o nó estiver sozinho)
+    if (err != MCP2515::ERROR_OK) {
+        bool is_alone_and_busy = (err == MCP2515::ERROR_ALLTXBUSY && myMatrix.getNumNodes() <= 1);
+        if (msgOut.cmd != 'W' && !is_alone_and_busy) {
+             Serial.printf("[CAN ERROR] Failed to send '%c'! MCP2515 Error Code: %d\n", msgOut.cmd, err);
         }
-    } else {
-        Serial.printf("[CAN ERROR] Failed to send! MCP2515 Error Code: %d\n", err);
     }
   }
 }
 
 void readMessage() {
   while((err = can0.readMessage(&canMsgRx)) == MCP2515::ERROR_OK){
-    uint8_t target_dest = canMsgRx.data[1];
-    uint8_t sender = canMsgRx.data[0];
     
-    //Serial.printf("[CAN RX] Physically received a message from node %d to node %d\n", sender, target_dest);
+    uint8_t sender = canMsgRx.data[0];
+    uint8_t target_dest = canMsgRx.data[1];
+    char cmd_received = canMsgRx.data[2]; 
+    
+    // ANTI-SPAM FILTER (NON-BLOCKING - FREERTOS)
+    static unsigned long last_rx_print = 0;
+    unsigned long current_time = (unsigned long)(xTaskGetTickCount() * portTICK_PERIOD_MS);
+
+    // Only allows printing every 1000ms (1 second)
+    if (current_time - last_rx_print > 1000) {
+        // And ignores Heartbeat ('H') messages which are constant spam
+        if (cmd_received != 'H') { 
+            Serial.printf("[CAN RX] Physically received a message from node %d to node %d\n", sender, target_dest);
+        }
+        last_rx_print = current_time;
+    }
+
+    // Only process if the message is for our node or Broadcast (255)
     if (target_dest == node_address || target_dest == 255) {
       ProtocolMsg_t msgIn;
-      msgIn.dest_id = canMsgRx.data[1]; 
       msgIn.src_id  = canMsgRx.data[0];
+      msgIn.dest_id = canMsgRx.data[1];
       msgIn.cmd     = canMsgRx.data[2];
       msgIn.subcmd  = canMsgRx.data[3];
       memcpy(&msgIn.value, &canMsgRx.data[4], sizeof(float));
+      
       xQueueSend(canRxQueue, &msgIn, 0);
     }
   }
 }
-
 // CAN error handling - core 1
 void handleCANErrors() {
     uint8_t eflg = can0.getErrorFlags();
@@ -333,7 +354,7 @@ void handleCANErrors() {
 
     if (eflg != last_eflg) {
         last_eflg = eflg; 
-        if (eflg != 0) {
+        if (eflg != 0 && myMatrix.getNumNodes()!= 1) {
             Serial.println("\n[CAN DIAGNOSTICS] Alteração no estado físico do Bus:");
             if (eflg & MCP2515::EFLG_TXBO)   Serial.println(" -> ERRO CRÍTICO: Bus-Off (Muitas falhas de TX)!"); 
             if (eflg & MCP2515::EFLG_TXEP)   Serial.println(" -> AVISO: TX Error-Passive (TEC >= 128)");
@@ -343,6 +364,8 @@ void handleCANErrors() {
             Serial.println("------------------------------------------------");
             can0.clearERRIF();
             can0.clearMERR();
+        }else if(myMatrix.getNumNodes()== 1){
+            return;
         } else {
             Serial.println("\n[CAN DIAGNOSTICS] A rede estabilizou. Erros físicos resolvidos.");
         }

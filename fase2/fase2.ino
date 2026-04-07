@@ -53,13 +53,14 @@ String inputBuffer = "";
 unsigned long last_micros = 0; 
 long max_jitter = 0;
 
+unsigned long last_seen_time[256] {0};
 
 // FreeRTOS task: Distributed controller (core 0)
 void controllerTask(void *pvParameters) {
     TickType_t xLastWakeTime;
     const TickType_t xFrequency = pdMS_TO_TICKS(10); // Exatamente 10ms (100Hz)
-
-    // Inicializa a variável com o tempo atual
+    
+    // Initialize variable with current time
     xLastWakeTime = xTaskGetTickCount();
 
     for (;;) {
@@ -76,15 +77,17 @@ void controllerTask(void *pvParameters) {
 
 // FreeRTOS Task: Calibration orchestration (core 0)
 void calibrationTask(void *pvParameters) {
-    calibTaskHandle = xTaskGetCurrentTaskHandle();
+    calibTaskHandle = xTaskGetCurrentTaskHandle(); // Task address 
 
-    // Trigger initial discovery on startup
+  // Trigger initial discovery on startup
+  // EVENT_NETWORK_CHANGE - event (flag), that indicates that the system just started 
+  // eSetBits - says that the info will be stored and will do an OR operation (overlap of the bits).
     xTaskNotify(calibTaskHandle, EVENT_NETWORK_CHANGE, eSetBits);
 
     for (;;) {
         // Block and wait for events (or timeout every 100ms to keep FSM ticking)
-        uint32_t events = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100));
-
+        uint32_t events = ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100)); 
+        // stop the core action to do other tasks until we receive a notification (1) or the timer ends (0)
         if (fsm != nullptr) {
             fsm->process(events);
         }
@@ -110,17 +113,17 @@ void setup() {
       vTaskDelay(1);
   }
 
-  // 1. Inicializar a matriz e a FSM com o ID correto
+  // Initialize matrix and State machine (FSM) with the right ID
   myMatrix.setMyId(node_address);
   fsm = new CalibrationFSM(myMatrix, led, ldr, box, node_address);
 
-  // 2. Criar a Task de Calibração (Prioridade 1)
+  // Creation of calibration task (Priority 1)
   xTaskCreate(calibrationTask, "CalibTask", 4096, NULL, 1, NULL);
 
-  // 3. Criar a Task de Controlo de Tempo Real (Prioridade 2 - A mais alta!)
+  // Creation of control task (Priority 2 - highest)
   xTaskCreate(controllerTask, "CtrlTask", 4096, NULL, 2, NULL);
   
-  // 4. ADICIONAR O NÓ À MATRIZ (A LINHA QUE FALTAVA)
+  // Add node to the matrix
   myMatrix.addNode(node_address);
   
   // Wake-Up Broadcast
@@ -133,9 +136,48 @@ void loop() {
   checkSerial();
   processNetworkMessages();
 
-  vTaskDelay(1); // Mantém a task Idle feliz
-}
+  // Read time using FreeRTOS non-blocking function
+  unsigned long current_time = (unsigned long)(xTaskGetTickCount() * portTICK_PERIOD_MS);
 
+  // Presence ping - every 2 seconds
+  static unsigned long last_heartbeat = 0;
+  if (current_time - last_heartbeat > 2000) {
+      last_heartbeat = current_time;
+      ProtocolMsg_t pingMsg = {node_address, 255, 'H', ' ', 0.0f}; 
+      xQueueSend(canTxQueue, &pingMsg, 0);
+  }
+
+  // Watchdog (Clean inactive nodes - 5 seconds timeout)
+  if (fsm != nullptr) {
+      const uint8_t* nodes = myMatrix.getNodesArray();
+      int numNodes = myMatrix.getNumNodes();
+      
+      for (int i = 0; i < numNodes; i++) {
+          uint8_t id = nodes[i];
+          if (id != node_address) {
+              if (current_time - last_seen_time[id] > 5000) { 
+                  Serial.printf("\n>>> TOPOLOGY: Node %d left the network (Timeout)!\n", id);
+                  myMatrix.removeNode(id);
+                  
+                  // Cancel streams to this node, if any exist
+                  if (net_stream_dest == id) net_streaming = false;
+                  if (net_buffer_dest == id) net_sending_buffer = false;
+
+                  // Notify Calibration Task that the network topology changed
+                  if (calibTaskHandle != NULL) {
+                      xTaskNotify(calibTaskHandle, EVENT_NETWORK_CHANGE, eSetBits);
+                  }
+                  break; // Break the for loop because the array size changed!
+              }
+          }
+      }
+  }
+
+  // THE CALL TO runControlLoop() IS NO LONGER HERE BECAUSE 
+  // IT RUNS IN controllerTask() WITH MAXIMUM PRIORITY!
+
+  vTaskDelay(1); // Keeps FreeRTOS breathing (Idle task execution)
+}
 // Core 1: Setup and loop (CAN Bus Network)
 void setup1() {
   pico_get_unique_board_id(&pico_board_id);

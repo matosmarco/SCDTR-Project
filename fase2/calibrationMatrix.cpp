@@ -46,7 +46,7 @@ void CalibrationMatrix::removeNode(uint8_t id) {
 }
 
 void CalibrationMatrix::sortNodes() {
-    // Insertion sort to ensure all nodes follow the exact same token order [cite: 10, 11]
+    // Insertion sort to ensure all nodes follow the exact same token order
     for (int i = 1; i < num_active_nodes; i++) {
         uint8_t key_node = active_nodes[i];
         float key_gain = local_gains[i];

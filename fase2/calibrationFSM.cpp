@@ -27,7 +27,7 @@ void CalibrationFSM::process(uint32_t eventBits) {
             break;
 
         case CalibState::WAIT_TOPOLOGY:
-            // Non-blocking wait for 5 seconds to let topology stabilize (Simultaneous startups) [cite: 21, 22]
+            // Non-blocking wait for 5 seconds to let topology stabilize (Simultaneous startups)
             vTaskDelay(pdMS_TO_TICKS(5000));
             
             calibData.sortNodes();
@@ -45,7 +45,7 @@ void CalibrationFSM::process(uint32_t eventBits) {
             if (nodes[current_token_index] == my_address) {
                 currentState = CalibState::MEASURE_OWN;
                 // Trigger ourselves immediately without waiting
-                xTaskNotify(xTaskGetCurrentTaskHandle(), EVENT_TOKEN_RCVD, eSetBits);
+                xTaskNotify(xTaskGetCurrentTaskHandle(), EVENT_TOKEN_RCVD, eSetBits); // Dummy state to avoid unecessary wait time on fase2.ino
             } else {
                 // Wait passively. The CAN RX handler will trigger EVENT_TOKEN_DONE
                 if (eventBits & EVENT_TOKEN_DONE) {
@@ -61,16 +61,16 @@ void CalibrationFSM::process(uint32_t eventBits) {
         case CalibState::MEASURE_OWN: {
             Serial.println("[FSM] My turn! Measuring self-coupling (K_ii).");
             led.setDuty(1.0f); // Turn on 100% [cite: 29]
-            
-            // Broadcast 'c' '1' to tell others to measure my influence (K_ij) [cite: 36]
+            vTaskDelay(pdMS_TO_TICKS(2000));
+            // Broadcast 'c' '1' to tell others to measure my influence (K_ij)
             ProtocolMsg_t msgMeasure = {my_address, 255, 'c', '1', 0.0f};
             xQueueSend(canTxQueue, &msgMeasure, 0);
 
-            // Yield CPU for 2 seconds while physics stabilize [cite: 38]
+            // Yield CPU for 2 seconds while physics stabilize
             vTaskDelay(pdMS_TO_TICKS(2000)); 
 
             float y_total = ldr.readLux();
-            float d_k = box.fixed_background(ldr); // Retrieve background [cite: 40]
+            float d_k = box.fixed_background(ldr); // Retrieve background
             float k_ii = y_total - d_k;
             if (k_ii < 0) k_ii = 0;
 
@@ -79,6 +79,8 @@ void CalibrationFSM::process(uint32_t eventBits) {
 
             // Turn off and broadcast 'c' '0' to pass the token [cite: 41, 42]
             led.setDuty(0.0f);
+            vTaskDelay(pdMS_TO_TICKS(2000));
+
             ProtocolMsg_t msgEnd = {my_address, 255, 'c', '0', 0.0f};
             xQueueSend(canTxQueue, &msgEnd, 0);
 

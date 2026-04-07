@@ -11,7 +11,6 @@ private:
     float local_gains[MAX_NODES]; // How other nodes affect me (My row in the K matrix)
     int num_active_nodes;
 
-    int findNodeIndex(uint8_t id) const;
 
 public:
     CalibrationMatrix(uint8_t node_id);
@@ -28,6 +27,7 @@ public:
     // Getters for network iteration
     const uint8_t* getNodesArray() const;
     int getNumNodes() const;
+    int findNodeIndex(uint8_t id) const;
     void clear();
 };
 
