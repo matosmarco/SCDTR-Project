@@ -188,6 +188,10 @@ void processCommand(String cmd, LED& led, LDR& ldr, Box& box, Metrics& metrics, 
             Serial.println();
         } else Serial.println("err");
     }
+    else if (cmd == "myid") {
+        Serial.print("My Node ID is: ");
+        Serial.println(luminaire.getId()); 
+    }
     // Mandatory commands (Tables 1, 2, and 3)
     
     // Table 2 - Metrics (Fixed with dynamic target_id)

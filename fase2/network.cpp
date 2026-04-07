@@ -14,11 +14,8 @@
 #include <queue.h>
 #include <task.h>
 
-// REFERÊNCIAS ÀS VARIÁVEIS GLOBAIS DO FASE2.INO (EXTERN)
-// Estas declarações têm de estar no topo ANTES de qualquer função!
+// Variables declared in fase2.ino
 extern String inputBuffer;
-
-// Objetos de Hardware / Controlo
 extern LED led;
 extern LDR ldr;
 extern Box box;
@@ -26,13 +23,13 @@ extern Metrics metrics;
 extern Luminaire luminaire;
 extern pid pid; 
 
-// Variáveis de Sistema e RTOS
+// System variables and RTOS variables
 extern uint8_t node_address;
 extern float global_energy_cost;
 extern QueueHandle_t canTxQueue;
 extern QueueHandle_t canRxQueue;
 
-// Calibração
+// Calibration
 extern CalibrationMatrix myMatrix;
 extern CalibrationFSM* fsm;
 extern TaskHandle_t calibTaskHandle;
@@ -42,7 +39,7 @@ extern MCP2515 can0;
 extern struct can_frame canMsgTx, canMsgRx;
 extern MCP2515::ERROR err;
 
-// Variáveis de Streaming de Rede
+// Network and streaming variables
 extern bool net_streaming;
 extern char net_stream_var;
 extern uint8_t net_stream_dest;
@@ -52,13 +49,10 @@ extern int net_buffer_index;
 extern uint8_t net_buffer_dest;
 
     
-float global_K_matrix[MAX_NODES-1][MAX_NODES-1] = {0.0f}; // Matriz para guardar os ganhos de todos os nós (1 a 10)
-int expected_k_elements = 0;            // Quantos elementos estamos à espera de receber nesta rajada
+float global_K_matrix[MAX_NODES][MAX_NODES] = {0.0f}; // Matrix to store all gains (1 to MAX_NODES)
+int expected_k_elements = 0; // variable to flag the number of elements to be sent
 
-// =========================================================================
-// IMPLEMENTAÇÃO DAS FUNÇÕES
-// =========================================================================
-
+// Functions
 void checkSerial() {
   while (Serial.available() > 0) {
     char c = Serial.read();
@@ -74,20 +68,20 @@ void checkSerial() {
   }
 }
 void processNetworkMessages() {
-  // 1. Verificar mensagens na Queue
+  // Verify message in the Queue
   int msgCount = uxQueueMessagesWaiting(canRxQueue);
-  if (msgCount == 0) return; // Sai imediatamente se não houver mensagens
+  if (msgCount == 0) return;
 
-  // 2. Extrair mensagens para um buffer local (max 10)
+  // Local buffer
   ProtocolMsg_t msgBuffer[QUEUE_SIZE];
   int actualCount = 0;
 
   while (xQueueReceive(canRxQueue, &msgBuffer[actualCount], 0) == pdPASS) {
     actualCount++;
-    if (actualCount >= 10) break; // Proteção extra
+    if (actualCount >= 10) break; // to avoid overflow
   }
 
-  // 3. Ordenação por prioridade (Insertion sort - ID mais baixo primeiro)
+  //Insertion sort - lowest ID
   for (int i = 1; i < actualCount; i++) {
       ProtocolMsg_t key = msgBuffer[i];
       int j = i - 1;
@@ -98,13 +92,11 @@ void processNetworkMessages() {
       msgBuffer[j + 1] = key;
   }
 
-  // 4. PROCESSAR AS MENSAGENS PELA ORDEM DE PRIORIDADE
+  // Processing messages by priority
   for (int i = 0; i < actualCount; i++) {
     ProtocolMsg_t msgIn = msgBuffer[i];
 
-    // ---------------------------------------------------------
-    // A. WAKE-UP, DESCOBERTA E HOT-PLUGGING ('w' e 'W')
-    // ---------------------------------------------------------
+    // Wake-up message (entering in the network)
     if (msgIn.cmd == 'w' || msgIn.cmd == 'W') {
         myMatrix.addNode(msgIn.src_id);
         
@@ -118,9 +110,7 @@ void processNetworkMessages() {
         }
     }
 
-    // ---------------------------------------------------------
-    // B. CALIBRAÇÃO PASSIVA & TOKEN RING ('c')
-    // ---------------------------------------------------------
+    // Passive calibration and token ring ('c')
     else if (msgIn.cmd == 'c') {
         if (msgIn.subcmd == '1' && msgIn.src_id != node_address) {
             float y_total = ldr.readLux();
@@ -138,38 +128,27 @@ void processNetworkMessages() {
         }
     }
 
-    // ---------------------------------------------------------
-    // C. ADMM / DUAL DECOMPOSITION - TROCA DE VETORES ('K')
-    // ---------------------------------------------------------
+    // Distributed control- exchange values of k_ij
     else if (msgIn.cmd == 'K') {
-        if (msgIn.subcmd == 'S') { 
-            // Início da transmissão (S = Start). O "value" traz o tamanho do vetor!
-            expected_k_elements = (int)msgIn.value;
-            Serial.printf("k %d ", msgIn.src_id); // Início do print do comando
-        } 
-        else if (msgIn.subcmd == 'E') {
-            // Fim da transmissão (E = End). Fecha a linha e confirma.
-            Serial.println(); 
-        } 
-        else {
-            // Elemento individual da matriz. O subcmd é o ID da coluna (Nó destino)
-            uint8_t col_id = (uint8_t)msgIn.subcmd;
-            float gain_value = msgIn.value;
+       	// Individual element of the matrix. subcmd is the ID of the column
+        uint8_t col_id = (uint8_t)msgIn.subcmd;
+        float gain_value = msgIn.value;
             
-            // 1. Imprime o valor no formato "ID:Ganho" para a consola/interface
-            Serial.printf("%d:%.4f ", col_id, gain_value);
+        // "ID:gain" print
+        Serial.printf("%d:%.4f ", col_id, gain_value);
             
-            // 2. GUARDA NA MATRIZ GLOBAL PARA O ADMM
-            if (msgIn.src_id <= 10 && col_id <= 10) { 
-                global_K_matrix[msgIn.src_id][col_id] = gain_value;
-            }
-        }
-    }
+        // 2. GUARDA NA MATRIZ GLOBAL PARA O ADMM
+        if (msgIn.src_id > 0 && msgIn.src_id <= MAX_NODES && col_id > 0 && col_id <= MAX_NODES) { 
+        	global_K_matrix[msgIn.src_id - 1][col_id - 1] = gain_value;
+        }        
+
+     }
+
 
     // ---------------------------------------------------------
     // D. COMANDOS GERAIS DA REDE E GUIÃO
     // ---------------------------------------------------------
-    else if (msgIn.cmd == 'R') {
+    else if (msgIn.cmd == 'R') {    
       metrics.reset();
       box.calibrate_background(led, ldr);
       box.identify_static_gain(led, ldr);
@@ -195,8 +174,8 @@ void processNetworkMessages() {
           int n = myMatrix.getNumNodes(); 
           
           // 1. Envia marcador de INÍCIO ('S') COM O TAMANHO DO VETOR (n)
-          ProtocolMsg_t startK = {node_address, msgIn.src_id, 'K', 'S', (float)n};
-          xQueueSend(canTxQueue, &startK, 0);
+          //ProtocolMsg_t startK = {node_address, msgIn.src_id, 'K', 'S', (float)n};
+          //xQueueSend(canTxQueue, &startK, 0);
           
           // 2. Envia os elementos do vetor
           const uint8_t* nodes = myMatrix.getNodesArray();
@@ -206,8 +185,8 @@ void processNetworkMessages() {
           }
           
           // 3. Envia marcador de FIM ('E')
-          ProtocolMsg_t endK = {node_address, msgIn.src_id, 'K', 'E', 0.0f};
-          xQueueSend(canTxQueue, &endK, 0);
+          //ProtocolMsg_t endK = {node_address, msgIn.src_id, 'K', 'E', 0.0f};
+          //xQueueSend(canTxQueue, &endK, 0);
       } 
       // -- RESTANTES COMANDOS GERAIS ('y', 'u', 'r', etc) --
       else {
@@ -326,7 +305,7 @@ void readMessage() {
     uint8_t target_dest = canMsgRx.data[1];
     uint8_t sender = canMsgRx.data[0];
     
-    Serial.printf("[CAN RX] Physically received a message from node %d to node %d\n", sender, target_dest);
+    //Serial.printf("[CAN RX] Physically received a message from node %d to node %d\n", sender, target_dest);
     if (target_dest == node_address || target_dest == 255) {
       ProtocolMsg_t msgIn;
       msgIn.dest_id = canMsgRx.data[1]; 
