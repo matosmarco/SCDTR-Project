@@ -53,7 +53,7 @@ extern unsigned long last_seen_time[256];
     
 float global_K_matrix[MAX_NODES][MAX_NODES] = {0.0f}; // Matrix to store all gains (1 to MAX_NODES)
 int expected_k_elements = 0; // variable to flag the number of elements to be sent
-
+extern DualDecomposition* dualDecomp;
 
 
 // Functions
@@ -144,18 +144,18 @@ void processNetworkMessages() {
 
     // Distributed control- exchange values of k_ij
     else if (msgIn.cmd == 'K') {
-       	// Individual element of the matrix. subcmd is the ID of the column
         uint8_t col_id = (uint8_t)msgIn.subcmd;
         float gain_value = msgIn.value;
             
-        // "ID:gain" print
-        Serial.printf("%d:%.4f ", col_id, gain_value);
-            
-        // 2. GUARDA NA MATRIZ GLOBAL PARA O ADMM
-        if (msgIn.src_id > 0 && msgIn.src_id <= MAX_NODES && col_id > 0 && col_id <= MAX_NODES) { 
-        	global_K_matrix[msgIn.src_id - 1][col_id - 1] = gain_value;
+        Serial.printf("K_received -> Line: %d | Column: %d | Value: %.4f\n", msgIn.src_id, col_id, gain_value);
+        
+        // CORREÇÃO: Converter os IDs (ex: 132) para índices seguros da matriz (ex: 0, 1...)
+        int row_idx = myMatrix.findNodeIndex(msgIn.src_id);
+        int col_idx = myMatrix.findNodeIndex(col_id);
+        
+        if (row_idx != -1 && col_idx != -1) { 
+            global_K_matrix[row_idx][col_idx] = gain_value;
         }        
-
      }
 
 
@@ -166,6 +166,23 @@ void processNetworkMessages() {
       box.identify_static_gain(led, ldr);
       Serial.printf("Node %d restarted via Broadcast!\n", node_address);
     }
+    else if (msgIn.cmd == 'r') {
+        if (msgIn.value >= 0.0f) {
+            luminaire.reference = msgIn.value;
+            Serial.printf("Network: Reference changed to %.2f by Node %d\n", msgIn.value, msgIn.src_id);
+        }
+    }
+    else if (msgIn.cmd == 'u') {
+        if (msgIn.value >= 0.0f && msgIn.value <= 1.0f) {
+            luminaire.current_u = msgIn.value;
+            led.setDuty(msgIn.value);
+            Serial.printf("Network: Duty cycle changed to %.2f by Node %d\n", msgIn.value, msgIn.src_id);
+        }
+    }
+    else if (msgIn.cmd == 'f') {
+        luminaire.feedback_on = (msgIn.value > 0.5f);
+    }
+
     else if (msgIn.cmd == 'o') {
       char occ_state = (char)msgIn.value;
       if (occ_state == 'o') { luminaire.state = LuminaireState::OFF; luminaire.reference = 0; } 
@@ -256,8 +273,30 @@ void processNetworkMessages() {
     else if (msgIn.cmd == 'S') { 
         net_streaming = false;
     }
+  // ---------------------------------------------------------
+    // DISTRIBUTED OPTIMIZATION & NETWORK STREAMING
+    // ---------------------------------------------------------
     else if (msgIn.cmd == 'D') { 
-    Serial.printf("s %c %d %.4f %lu\n", msgIn.subcmd, msgIn.src_id, msgIn.value, (unsigned long)(xTaskGetTickCount() * portTICK_PERIOD_MS));    
+        // 1. Is it from ADMM? (Sent via Broadcast to 255)
+        if (msgIn.dest_id == 255) {
+            // Store in memory for calculations. NO PRINTING! (Total silence)
+            if (dualDecomp != nullptr) {
+                dualDecomp->updateOtherU(msgIn.src_id, msgIn.value, myMatrix);
+            }
+        }
+        // 2. Is it Remote Streaming on demand? (Sent DIRECTLY to me)
+        else if (msgIn.dest_id == node_address) {
+            // Here we do the print requested by the 's' command
+            Serial.printf("s %c %d %.4f %lu\n", msgIn.subcmd, msgIn.src_id, msgIn.value, (unsigned long)(xTaskGetTickCount() * portTICK_PERIOD_MS));    
+        }
+    }
+    
+    // RECEPTION OF PRICES
+    else if (msgIn.cmd == 'P') {
+        // Prices are private. Store in memory without printing.
+        if (dualDecomp != nullptr && msgIn.dest_id == node_address) {
+            dualDecomp->updateOtherPrice(msgIn.src_id, msgIn.value, myMatrix);
+        }
     }
     
     else if (msgIn.cmd == 'b') { 

@@ -6,7 +6,7 @@ extern QueueHandle_t canTxQueue;
 
 CalibrationFSM::CalibrationFSM(CalibrationMatrix& data, LED& l, LDR& r, Box& b, uint8_t addr) 
     : calibData(data), led(l), ldr(r), box(b), my_address(addr), 
-      currentState(CalibState::WAIT_TOPOLOGY), isCalibrated(false), current_token_index(0) {}
+      currentState(CalibState::WAIT_TOPOLOGY), isCalibrated(false), current_token_index(0), has_measured_kii(false) {} 
 
 void CalibrationFSM::triggerRecalibration() {
     currentState = CalibState::WAIT_TOPOLOGY;
@@ -59,9 +59,10 @@ void CalibrationFSM::process(uint32_t eventBits) {
         }
 
         case CalibState::MEASURE_OWN: {
-            Serial.println("[FSM] My turn! Measuring self-coupling (K_ii).");
-            led.setDuty(1.0f); // Turn on 100% [cite: 29]
+            Serial.println("[FSM] My turn! Turning on LED.");
+            led.setDuty(1.0f); // Turn on 100% 
             vTaskDelay(pdMS_TO_TICKS(2000));
+            
             // Broadcast 'c' '1' to tell others to measure my influence (K_ij)
             ProtocolMsg_t msgMeasure = {my_address, 255, 'c', '1', 0.0f};
             xQueueSend(canTxQueue, &msgMeasure, 0);
@@ -69,15 +70,24 @@ void CalibrationFSM::process(uint32_t eventBits) {
             // Yield CPU for 2 seconds while physics stabilize
             vTaskDelay(pdMS_TO_TICKS(2000)); 
 
-            float y_total = ldr.readLux();
-            float d_k = box.fixed_background(ldr); // Retrieve background
-            float k_ii = y_total - d_k;
-            if (k_ii < 0) k_ii = 0;
+            if (!has_measured_kii) {
+                // Se ainda não medi, vou ler o sensor e calcular!
+                float y_total = ldr.readLux();
+                float d_k = box.fixed_background(ldr); 
+                float k_ii = y_total - d_k;
+                if (k_ii < 0) k_ii = 0;
 
-            calibData.updateGain(my_address, k_ii);
-            Serial.printf("Own gain (K_ii): %.4f\n", k_ii);
+                calibData.updateGain(my_address, k_ii);
+                Serial.printf("Own gain (K_ii) measured: %.4f\n", k_ii);
+                
+                // Tranca a variável. Acabei de me tornar num Veterano!
+                has_measured_kii = true; 
+            } else {
+                // Se já medi noutra calibração anterior, salto esta parte!
+                Serial.printf("[FSM] Veteran node. Preserving existing K_ii: %.4f\n", calibData.getGain(my_address));
+            }
 
-            // Turn off and broadcast 'c' '0' to pass the token [cite: 41, 42]
+            // Turn off and broadcast 'c' '0' to pass the token 
             led.setDuty(0.0f);
             vTaskDelay(pdMS_TO_TICKS(2000));
 

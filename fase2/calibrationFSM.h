@@ -31,7 +31,7 @@ private:
     Box& box;
     uint8_t my_address;
     int current_token_index;
-
+    bool has_measured_kii;
 public:
     bool isCalibrated; // Exposes state to the main optimization loop
 
