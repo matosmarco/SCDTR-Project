@@ -1,4 +1,5 @@
 #include "box.h"
+#include <FreeRTOS.h>
 Box::Box(){
 	backgroundLux = 0.0;
 	gain = 0.0;
@@ -6,7 +7,7 @@ Box::Box(){
 
 void Box::calibrate_background(LED& led, LDR& ldr){
   led.off();
-  delay(2000);
+  vTaskDelay(pdMS_TO_TICKS(2000));
 
   // Clear readings due the delay 
   for(int i = 0; i < MEDIAN_BUFFER_SIZE; i++) ldr.readVoltage();

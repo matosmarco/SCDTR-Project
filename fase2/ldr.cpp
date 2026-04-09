@@ -5,8 +5,8 @@ LDR::LDR(){
     m = -0.8492; 
 	b = 5.22; 
     // LED right
-    //m = -0.8553;
-    //b = 4.91;
+    //m = -0.86;
+    //b = 6.1;
 	// Initialization of the buffer (for the filter)
 	bufferIndex = 0;
 	bufferFilled = false;

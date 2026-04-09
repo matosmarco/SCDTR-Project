@@ -13,7 +13,7 @@
 #include <FreeRTOS.h>
 #include <queue.h>
 #include <task.h>
-
+#include "admm.h"
 // Variables declared in fase2.ino
 extern String inputBuffer;
 extern LED led;
@@ -50,11 +50,12 @@ extern uint8_t net_buffer_dest;
 
 
 extern unsigned long last_seen_time[256];
-    
+
 float global_K_matrix[MAX_NODES][MAX_NODES] = {0.0f}; // Matrix to store all gains (1 to MAX_NODES)
 int expected_k_elements = 0; // variable to flag the number of elements to be sent
 extern DualDecomposition* dualDecomp;
-
+extern ADMM* admmDecomp;
+extern bool distributed_ctrl_active;
 
 // Functions
 void checkSerial() {
@@ -82,7 +83,7 @@ void processNetworkMessages() {
 
   while (xQueueReceive(canRxQueue, &msgBuffer[actualCount], 0) == pdPASS) {
     actualCount++;
-    if (actualCount >= 10) break; // to avoid overflow
+    if (actualCount >= QUEUE_SIZE) break; // to avoid overflow
   }
 
   //Insertion sort - lowest ID
@@ -129,6 +130,7 @@ void processNetworkMessages() {
             float y_total = ldr.readLux();
             float d_k = box.fixed_background(ldr); 
             float k_ij = y_total - d_k;
+            Serial.printf(">>> CALIB DEBUG | Lendo LED do No %d | y_total: %.2f | d_k: %.2f | K resultante: %.4f\n", msgIn.src_id, y_total, d_k, k_ij);
             if (k_ij < 0) k_ij = 0; 
             
             myMatrix.updateGain(msgIn.src_id, k_ij);
@@ -182,7 +184,18 @@ void processNetworkMessages() {
     else if (msgIn.cmd == 'f') {
         luminaire.feedback_on = (msgIn.value > 0.5f);
     }
-
+    // --- TURN ON/OFF DISTRIBUTED CONTROLLER REMOTELY ---
+    else if (msgIn.cmd == 'X') {
+        // If the value is greater than 0.5, turn on. Otherwise, turn off.
+        distributed_ctrl_active = (msgIn.value > 0.5f);
+        
+        if (distributed_ctrl_active) {
+            Serial.printf("Network: Dual Decomposition ENABLED by Node %d\n", msgIn.src_id);
+        } else {
+            Serial.printf("Network: Dual Decomposition DISABLED by Node %d\n", msgIn.src_id);
+        }
+    }
+    // ---------------------------------------------------
     else if (msgIn.cmd == 'o') {
       char occ_state = (char)msgIn.value;
       if (occ_state == 'o') { luminaire.state = LuminaireState::OFF; luminaire.reference = 0; } 
@@ -204,11 +217,11 @@ void processNetworkMessages() {
           //ProtocolMsg_t startK = {node_address, msgIn.src_id, 'K', 'S', (float)n};
           //xQueueSend(canTxQueue, &startK, 0);
           
-          // 2. Envia os elementos do vetor
-          const uint8_t* nodes = myMatrix.getNodesArray();
+         const uint8_t* nodes = myMatrix.getNodesArray();
           for (int i = 0; i < n; i++) {
               ProtocolMsg_t replyK = {node_address, msgIn.src_id, 'K', (char)nodes[i], myMatrix.getGain(nodes[i])};
-              xQueueSend(canTxQueue, &replyK, 0);
+              // Tolerância de 5ms para sobreviver à rajada de mensagens!
+              xQueueSend(canTxQueue, &replyK, pdMS_TO_TICKS(5));
           }
           
           // 3. Envia marcador de FIM ('E')
@@ -298,7 +311,19 @@ void processNetworkMessages() {
             dualDecomp->updateOtherPrice(msgIn.src_id, msgIn.value, myMatrix);
         }
     }
-    
+    // =========================================================
+    // RECEÇÃO DE DADOS ADMM ('M')  <--- ADICIONA ESTE BLOCO TODO
+    // =========================================================
+    else if (msgIn.cmd == 'M') {
+        if (msgIn.dest_id == 255 && admmDecomp != nullptr) {
+            // O subcmd contém o ID original a que este valor percentual se refere
+            int src_idx = myMatrix.findNodeIndex(msgIn.src_id);
+            int target_idx = myMatrix.findNodeIndex((uint8_t)msgIn.subcmd);
+            
+            admmDecomp->update_network_u_element(src_idx, target_idx, msgIn.value);
+        }
+    }
+    // =========================================================
     else if (msgIn.cmd == 'b') { 
         if (msgIn.value == -1.0f) {        
             Serial.printf("b %c %d ", msgIn.subcmd, msgIn.src_id);
@@ -320,13 +345,15 @@ void processNetworkMessages() {
   } 
 }
 // CAN communication functions - core 1
+// CAN communication functions - core 1
 void sendMessage() {
   ProtocolMsg_t msgOut;
-  if (xQueueReceive(canTxQueue, &msgOut, 0) == pdPASS) {
+  
+  // USAR PEEK: Apenas "espreita" a mensagem sem a tirar da fila
+  if (xQueuePeek(canTxQueue, &msgOut, 0) == pdPASS) {
     canMsgTx.can_id = node_address;
     canMsgTx.can_dlc = 8; 
     
-    // CORREÇÃO: Ordem exata da struct ProtocolMsg_t
     canMsgTx.data[0] = msgOut.src_id;   // Sender
     canMsgTx.data[1] = msgOut.dest_id;  // Target
     canMsgTx.data[2] = msgOut.cmd;
@@ -335,16 +362,21 @@ void sendMessage() {
     
     err = can0.sendMessage(&canMsgTx);
 
-    // SILENCIADOR DE SPAM (Ignora erro de buffer cheio se o nó estiver sozinho)
-    if (err != MCP2515::ERROR_OK) {
-        bool is_alone_and_busy = (err == MCP2515::ERROR_ALLTXBUSY && myMatrix.getNumNodes() <= 1);
-        if (msgOut.cmd != 'W' && !is_alone_and_busy) {
-             Serial.printf("[CAN ERROR] Failed to send '%c'! MCP2515 Error Code: %d\n", msgOut.cmd, err);
+    if (err == MCP2515::ERROR_OK) {
+        // SUCESSO! Agora sim, removemos a mensagem definitivamente da fila
+        xQueueReceive(canTxQueue, &msgOut, 0);
+    } 
+    else if (err != MCP2515::ERROR_ALLTXBUSY) {
+        // Erro fatal (cabo desligado, etc). Removemos para não bloquear a fila toda.
+        xQueueReceive(canTxQueue, &msgOut, 0);
+        bool is_alone = (myMatrix.getNumNodes() <= 1);
+        if (msgOut.cmd != 'W' && !is_alone) {
+             Serial.printf("[CAN ERROR] Failed to send '%c'! MCP2515 Error: %d\n", msgOut.cmd, err);
         }
     }
+    // Se for ALLTXBUSY, não fazemos nada! A mensagem fica na fila para tentar no próximo ciclo.
   }
 }
-
 void readMessage() {
   while((err = can0.readMessage(&canMsgRx)) == MCP2515::ERROR_OK){
     
@@ -383,6 +415,7 @@ void handleCANErrors() {
     uint8_t eflg = can0.getErrorFlags();
     static uint8_t last_eflg = 0; 
 
+    // 1. Limpeza de Overflow (Isto é rápido e não bloqueia)
     if (eflg & (MCP2515::EFLG_RX0OVR | MCP2515::EFLG_RX1OVR)) {
         can0.clearRXnOVRFlags(); 
         can0.clearInterrupts();  
@@ -391,31 +424,41 @@ void handleCANErrors() {
         }
     }
 
+    // 2. Diagnósticos de Série (Apenas avisa uma vez quando o estado muda)
     if (eflg != last_eflg) {
         last_eflg = eflg; 
-        if (eflg != 0 && myMatrix.getNumNodes()!= 1) {
+        if (eflg != 0 && myMatrix.getNumNodes() != 1) {
             Serial.println("\n[CAN DIAGNOSTICS] Alteração no estado físico do Bus:");
             if (eflg & MCP2515::EFLG_TXBO)   Serial.println(" -> ERRO CRÍTICO: Bus-Off (Muitas falhas de TX)!"); 
             if (eflg & MCP2515::EFLG_TXEP)   Serial.println(" -> AVISO: TX Error-Passive (TEC >= 128)");
             if (eflg & MCP2515::EFLG_RXEP)   Serial.println(" -> AVISO: RX Error-Passive (REC >= 128)");
-            if (eflg & MCP2515::EFLG_TXWAR)  Serial.println(" -> AVISO: TX Error Warning (TEC >= 96)");
-            if (eflg & MCP2515::EFLG_RXWAR)  Serial.println(" -> AVISO: RX Error Warning (REC >= 96)");
             Serial.println("------------------------------------------------");
             can0.clearERRIF();
             can0.clearMERR();
-        }else if(myMatrix.getNumNodes()== 1){
+        } else if (myMatrix.getNumNodes() == 1) {
             return;
         } else {
             Serial.println("\n[CAN DIAGNOSTICS] A rede estabilizou. Erros físicos resolvidos.");
         }
     }
 
+    // 3. Recuperação de Bus-Off com COOLDOWN (Para evitar o Reset Loop fatal)
     if (eflg & MCP2515::EFLG_TXBO) {
-        Serial.println("\n[RECUPERAÇÃO] A reiniciar o controlador MCP2515 para sair de Bus-Off...");
-        can0.reset();
-        can0.setBitrate(CAN_1000KBPS);
-        can0.setNormalMode();
-        last_eflg = 0; 
-        vTaskDelay(pdMS_TO_TICKS(10)); 
+        static unsigned long last_reset_time = 0;
+        unsigned long current_time = millis();
+        
+        // Só permite tentar fazer reset de 2 em 2 segundos!
+        if (current_time - last_reset_time > 2000) {
+            Serial.println("\n[RECUPERAÇÃO] A reiniciar o controlador MCP2515 para sair de Bus-Off...");
+            last_reset_time = current_time;
+            
+            // Tenta reiniciar
+            can0.reset();
+            can0.setBitrate(CAN_1000KBPS);
+            can0.setNormalMode();
+            
+            // REMOVIDO: last_eflg = 0; (Isto causava spam infinito no Serial)
+            // REMOVIDO: vTaskDelay(10); (Causava bloqueio constante)
+        }
     }
 }

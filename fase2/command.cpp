@@ -9,6 +9,7 @@ extern QueueHandle_t canTxQueue;     // Access to the TX queue managed in main.i
 extern float global_energy_cost;     // Access to the global energy cost variable
 extern bool net_streaming;
 extern CalibrationMatrix myMatrix;
+extern bool distributed_ctrl_active;
 // Processes incoming serial commands to interact with the system
 void processCommand(String cmd, LED& led, LDR& ldr, Box& box, Metrics& metrics, Luminaire& luminaire, pid& pid) {
     // Remove leading and trailing whitespace
@@ -71,7 +72,7 @@ void processCommand(String cmd, LED& led, LDR& ldr, Box& box, Metrics& metrics, 
     // If the message is for another node on the network, enqueue it and stop here.
     if (is_network) {
         xQueueSend(canTxQueue, &msg, 0);
-        return; 
+        if(dest_id != 255) return;
     }
 
     // =========================================================
@@ -192,6 +193,23 @@ void processCommand(String cmd, LED& led, LDR& ldr, Box& box, Metrics& metrics, 
         Serial.print("My Node ID is: ");
         Serial.println(luminaire.getId()); 
     }
+    // --- Turn On/Off Distributed Controllers (Broadcast to the entire network) ---
+    else if (cmd == "dd off" || cmd == "admm off" || cmd == "dc off") {
+        distributed_ctrl_active = false; // Turn off locally
+        Serial.println("ack - Controller Disabled on the network. Manual Mode Active!");
+
+        // Broadcast to the entire network (ID 255) using command 'X' with value 0
+        ProtocolMsg_t msgX = {(uint8_t)luminaire.getId(), 255, 'X', ' ', 0.0f};
+        xQueueSend(canTxQueue, &msgX, 0);
+    }
+    else if (cmd == "dd on" || cmd == "admm on" || cmd == "dc on") {
+        distributed_ctrl_active = true; // Turn on locally
+        Serial.println("ack - Controller Enabled on the network. Optimizing...");
+
+        // Broadcast to the entire network (ID 255) using command 'X' with value 1
+        ProtocolMsg_t msgX = {(uint8_t)luminaire.getId(), 255, 'X', ' ', 1.0f};
+        xQueueSend(canTxQueue, &msgX, 0);
+    }
     // Mandatory commands (Tables 1, 2, and 3)
     
     // Table 2 - Metrics (Fixed with dynamic target_id)
@@ -227,7 +245,7 @@ void processCommand(String cmd, LED& led, LDR& ldr, Box& box, Metrics& metrics, 
         } else Serial.println("err");
     }
     else if (sscanf(cmd.c_str(), "r %d %f", &target_id, &val) == 2) {
-        if (target_id == luminaire.getId()) {
+        if (target_id == luminaire.getId() || target_id == 255) {
             if (val >= 0.0f) {
                 luminaire.reference = val; 
                 Serial.println("ack");      
@@ -308,10 +326,13 @@ void processCommand(String cmd, LED& led, LDR& ldr, Box& box, Metrics& metrics, 
     }
     else if (sscanf(cmd.c_str(), "g t %d", &target_id) == 1) {
         if (target_id == luminaire.getId()) {
-            float seconds = millis() / 1000.0f;
+        // Obtém os ticks atuais do FreeRTOS, converte para milissegundos e depois para segundos
+            float seconds = (float)pdTICKS_TO_MS(xTaskGetTickCount()) / 1000.0f;
             Serial.print("t "); Serial.print(target_id); Serial.print(" "); Serial.println(seconds, 3);
-        } else Serial.println("err"); 
-    }
+        } else {
+            Serial.println("err");
+        }
+}
     else if (sscanf(cmd.c_str(), "s %c %d", &type, &target_id) == 2) {
         if (target_id == luminaire.getId()) {
             if (type == 'y' || type == 'u') {

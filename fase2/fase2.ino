@@ -14,7 +14,7 @@
 #include "calibrationMatrix.h"
 #include "calibrationFSM.h"
 #include "network.h"
-
+#include "admm.h"
 
 // FreeRTOS thread-safe queues for inter-core communication
 QueueHandle_t canTxQueue;
@@ -29,6 +29,8 @@ TaskHandle_t calibTaskHandle = NULL;
 DualDecomposition* dualDecomp = nullptr; 
 bool distributed_ctrl_active = true; // Toggle between Distributed and Open-Loop
 
+// ADMM
+ADMM* admmDecomp = nullptr;
 // Network control variables 
 bool net_streaming = false;
 char net_stream_var = 'y';
@@ -63,7 +65,7 @@ unsigned long last_seen_time[256] {0};
 static float dd_u_setpoint = 0.0f;  // last converged duty (0.0 to 1.0)
 
 // FreeRTOS task: Distributed controller (core 0)
-void controllerTask(void *pvParameters) {
+void controllerTask_dd(void *pvParameters) {
     TickType_t xLastWakeTime;
 
     // Control loop: 100 Hz for LED output (smooth hold of setpoint)
@@ -122,10 +124,10 @@ void controllerTask(void *pvParameters) {
 
                 // Primal update
                 float u_dd_100 = dualDecomp->compute_u(k_ii, myMatrix);
-                
+                Serial.printf("u %.4f\n", u_dd_100); //TOCHECK
                 // Dual update (Agora Adaptativo!)
                 dualDecomp->compute_l(y_meas, L);
-
+                Serial.printf("LAMBDA %.4f\n", dualDecomp->get_l()); //TOCHECK
                 // Convert 0-100 scale to 0.0-1.0 for LED
                 dd_u_setpoint = constrain(u_dd_100 / 100.0f, 0.0f, 1.0f);
 
@@ -149,6 +151,97 @@ void controllerTask(void *pvParameters) {
 
         // --- Apply setpoint at 100 Hz (steady, no flicker) ---
         runControlLoop();
+    }
+}
+
+void controllerTask_admm(void *pvParameters) {
+    TickType_t xLastWakeTime;
+
+    // Control loop: 100 Hz for LED output (smooth hold of setpoint)
+    const TickType_t xCtrlPeriod = pdMS_TO_TICKS(10);
+    
+    // Optimization loop: (every 150ms) — reduces flicker, matches CAN round-trip
+    const TickType_t xOptPeriod  = pdMS_TO_TICKS(200);
+    TickType_t xLastOptTime      = xTaskGetTickCount();
+
+    static bool matrix_requested = false;
+
+    // TÁTICA DE REDE: Desfasar o arranque dos nós para não entupirem o CAN Bus em simultâneo
+    vTaskDelay(pdMS_TO_TICKS(node_address * 5));
+
+    xLastWakeTime = xTaskGetTickCount();
+
+    for (;;) {
+        vTaskDelayUntil(&xLastWakeTime, xCtrlPeriod);
+
+        if (fsm == nullptr || !fsm->isCalibrated) continue;
+
+        // --- Matrix exchange (one-shot on first calibration) ---
+        if (!matrix_requested) {
+            Serial.println("\n[DD] Requesting K-matrix from neighbours...");
+            ProtocolMsg_t reqK = {node_address, 255, 'g', 'k', 0.0f};
+            xQueueSend(canTxQueue, &reqK, 0);
+
+            // Store own row in global matrix
+            int my_idx = myMatrix.findNodeIndex(node_address);
+            int n = myMatrix.getNumNodes();
+            const uint8_t* nodes = myMatrix.getNodesArray();
+            if (my_idx != -1) {
+                for (int i = 0; i < n; i++) {
+                    int col_idx = myMatrix.findNodeIndex(nodes[i]);
+                    if (col_idx != -1)
+                        global_K_matrix[my_idx][col_idx] = myMatrix.getGain(nodes[i]);
+                }
+            }
+
+            matrix_requested = true;
+            vTaskDelay(pdMS_TO_TICKS(2000)); // wait for neighbours to reply
+            Serial.println("[DD] Matrix ready. Starting optimization.");
+            continue;
+        }
+
+        // --- Optimization step ---
+        TickType_t now = xTaskGetTickCount();
+        if ((now - xLastOptTime) >= xOptPeriod) {
+            xLastOptTime = now;
+
+            if (distributed_ctrl_active) {
+                float L = luminaire.reference;
+
+                // ==========================================
+                // NOVO CÓDIGO: ADMM (Escala 0.0 a 1.0)
+                // ==========================================
+                if (admmDecomp != nullptr) {
+                    
+                    // 1. Atualizar custos e a matriz global
+                    admmDecomp->update_params(global_energy_cost, myMatrix, global_K_matrix);
+                    
+                    // 2. Ler o sensor real
+                    float y_meas = ldr.readLux();
+                    
+                    // 3. Iterar a matemática (já devolve um número limpo entre 0.0 e 1.0)
+                    float u_admm = admmDecomp->consensus_iterate(y_meas, L);
+
+                    // 4. Aplicar ao hardware (Dividimos por 100.0f para ficar entre 0.0 e 1.0)
+                    dd_u_setpoint = constrain(u_admm / 100.0f, 0.0f, 1.0f);
+
+                    // 5. Enviar a MINHA estimativa global a todos os vizinhos (comando 'M')
+                    int n = myMatrix.getNumNodes();
+                    const float* my_u_array = admmDecomp->get_u();
+                    const uint8_t* nodes = myMatrix.getNodesArray();
+                    
+                    for (int i = 0; i < n; i++) {
+                        ProtocolMsg_t msgADMM = {node_address, 255, 'M', (char)nodes[i], my_u_array[i]};
+                        // Tolerância de 5ms para garantir que a mensagem entra no buffer
+                        xQueueSend(canTxQueue, &msgADMM, pdMS_TO_TICKS(5)); 
+                        vTaskDelay(pdMS_TO_TICKS(2));
+                    }
+                }
+            }
+        }
+
+        // --- Apply setpoint at 100 Hz (steady, no flicker) ---
+        runControlLoop_admm();
     }
 }
 // FreeRTOS Task: Calibration orchestration (core 0)
@@ -188,15 +281,22 @@ void setup() {
   }
 
   // Initialize Dual Decomposition solver
-  dualDecomp = new DualDecomposition(node_address, global_energy_cost, 0.05f, 0.004f);
+  //dualDecomp = new DualDecomposition(node_address, global_energy_cost, 0.05f, 0.004f);
+
+  // Initialize ADMM solver (rho = 0.02, como no Matlab)
+  admmDecomp = new ADMM(node_address, 0.02f);
+
   // Initialize matrix and State machine (FSM) with the right ID
   myMatrix.setMyId(node_address);
   luminaire.setId(node_address);
   fsm = new CalibrationFSM(myMatrix, led, ldr, box, node_address);
 
   // Task Creation
-  xTaskCreate(calibrationTask, "CalibTask", 4096, NULL, 1, NULL);
-  xTaskCreate(controllerTask, "CtrlTask", 4096, NULL, 2, NULL);
+  //xTaskCreate(calibrationTask_dd, "CalibTask Dual Decomp", 4096, NULL, 1, NULL);
+  
+  xTaskCreate(calibrationTask, "CalibTask ADMM", 4096, NULL, 1, NULL);
+
+  xTaskCreate(controllerTask_admm, "CtrlTask", 4096, NULL, 2, NULL);
 
   // Add node to the matrix
   myMatrix.addNode(node_address);
@@ -274,7 +374,7 @@ void loop1() {
   sendMessage();
   readMessage();
   handleCANErrors();
-  vTaskDelay(1);
+  //vTaskDelay(1);
 }
 
 void runControlLoop() {
@@ -294,6 +394,95 @@ void runControlLoop() {
     if (fsm != nullptr && fsm->isCalibrated && dualDecomp != nullptr && distributed_ctrl_active) {
         // Simply apply the setpoint computed by the optimization task.
         // No re-running the algorithm here — that would cause 100Hz oscillation.
+        u_k = dd_u_setpoint;
+
+    } else {
+        // FALLBACK: feedforward or manual
+        if (luminaire.feedforward_on && K > 0.001f && luminaire.reference > 0) {
+            u_k = (luminaire.reference - d_k) / K;
+        } else {
+            u_k = luminaire.current_u;
+        }
+        u_k = constrain(u_k, 0.0f, 1.0f);
+    }
+
+    led.setDuty(u_k);
+    luminaire.current_u = u_k;
+
+    metrics.update(u_k, y_k, luminaire.reference, 0.01f);
+
+    // Local streaming
+    if (luminaire.streaming) {
+        Serial.print("s ");
+        Serial.print(luminaire.stream_var);
+        Serial.print(" ");
+        Serial.print(luminaire.getId());
+        Serial.print(" ");
+        if (luminaire.stream_var == 'b') {
+            Serial.print(y_k, 2); Serial.print(" ");
+            Serial.print(u_k, 4); Serial.print(" ");
+            Serial.print(luminaire.reference, 2);
+        } else {
+            float val = (luminaire.stream_var == 'y') ? y_k : u_k;
+            Serial.print(val, 4);
+        }
+        Serial.print(" ");
+        Serial.println(millis());
+    }
+
+    // Network streaming
+    if (net_streaming) {
+        ProtocolMsg_t streamMsg;
+        streamMsg.dest_id = net_stream_dest;
+        streamMsg.src_id  = node_address;
+        streamMsg.cmd     = 'D';
+        streamMsg.subcmd  = net_stream_var;
+        streamMsg.value   = (net_stream_var == 'y') ? y_k : u_k;
+        xQueueSend(canTxQueue, &streamMsg, 0);
+    }
+
+    // Network buffer drip-feed
+    if (net_sending_buffer) {
+        int burst_limit = 2;
+        while (burst_limit > 0 && net_buffer_index < 6000) {
+            ProtocolMsg_t bufMsg;
+            bufMsg.dest_id = net_buffer_dest;
+            bufMsg.src_id  = node_address;
+            bufMsg.cmd     = 'B';
+            bufMsg.subcmd  = net_buffer_var;
+            bufMsg.value   = metrics.getBufferValue(net_buffer_var, net_buffer_index);
+            if (xQueueSend(canTxQueue, &bufMsg, 0) == pdPASS) {
+                net_buffer_index++;
+                burst_limit--;
+            } else {
+                break;
+            }
+        }
+        if (net_buffer_index >= 6000) {
+            net_sending_buffer = false;
+            ProtocolMsg_t endMsg = {node_address, net_buffer_dest, 'b', net_buffer_var, -2.0f};
+            xQueueSend(canTxQueue, &endMsg, 0);
+        }
+    }
+}
+
+void runControlLoop_admm() {
+    unsigned long current_micros = micros();
+    if (last_micros > 0) {
+        long period = (long)(current_micros - last_micros);
+        long dev = abs(period - 10000);
+        if (dev > max_jitter) max_jitter = dev;
+    }
+    last_micros = current_micros;
+
+    float y_k = ldr.readLux();
+    float K   = box.get_gain();
+    float d_k = box.fixed_background(ldr);
+    float u_k;
+
+    // A grande diferença: verifica admmDecomp em vez de dualDecomp!
+    if (fsm != nullptr && fsm->isCalibrated && admmDecomp != nullptr && distributed_ctrl_active) {
+        // Aplica o setpoint calculado pela controllerTask_admm
         u_k = dd_u_setpoint;
 
     } else {
