@@ -126,10 +126,10 @@ void controllerTask_dd(void *pvParameters) {
 
                 // Primal update
                 float u_dd_100 = dualDecomp->compute_u(k_ii, myMatrix);
-                //Serial.printf("u %.4f\n", u_dd_100); //TOCHECK
+                Serial.printf("u %.4f\n", u_dd_100); //TOCHECK
                 // Dual update (Agora Adaptativo!)
                 dualDecomp->compute_l(y_meas, L);
-                //Serial.printf("LAMBDA %.4f\n", dualDecomp->get_l()); //TOCHECK
+                Serial.printf("LAMBDA %.4f\n", dualDecomp->get_l()); //TOCHECK
                 // Convert 0-100 scale to 0.0-1.0 for LED
                 dd_u_setpoint = constrain(u_dd_100 / 100.0f, 0.0f, 1.0f);
 
@@ -317,10 +317,10 @@ void setup() {
   }
 
   // Initialize Dual Decomposition solver
-  //dualDecomp = new DualDecomposition(node_address, global_energy_cost, 0.05f, 0.004f);
+  dualDecomp = new DualDecomposition(node_address, global_energy_cost, 0.05f, 0.004f);
 
   // Initialize ADMM solver (rho = 0.02, como no Matlab)
-  admmDecomp = new ADMM(node_address, 0.02f);
+  //admmDecomp = new ADMM(node_address, 0.05f);
 
   // Initialize matrix and State machine (FSM) with the right ID
   myMatrix.setMyId(node_address);
@@ -328,11 +328,11 @@ void setup() {
   fsm = new CalibrationFSM(myMatrix, led, ldr, box, node_address);
 
   // Task Creation
-  //xTaskCreate(calibrationTask_dd, "CalibTask Dual Decomp", 4096, NULL, 1, NULL);
+  xTaskCreate(controllerTask_dd, "CtrlTask DD", 4096, NULL, 2, NULL);
   
   xTaskCreate(calibrationTask, "CalibTask ADMM", 4096, NULL, 1, NULL);
 
-  xTaskCreate(controllerTask_admm, "CtrlTask", 4096, NULL, 2, NULL);
+  //xTaskCreate(controllerTask_admm, "CtrlTask", 4096, NULL, 2, NULL);
 
   // Add node to the matrix
   myMatrix.addNode(node_address);

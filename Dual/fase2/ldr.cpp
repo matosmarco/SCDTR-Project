@@ -2,11 +2,11 @@
 LDR::LDR(){
 	// Initial parameters of the log function of the sensor (LDR)
 	// LED left
-    m = -0.8492; 
-	b = 5.22; 
+    //m = -0.8492; 
+	  //b = 5.22; 
     // LED right
-    //m = -0.94;
-    //b = 6.0464;
+    m = -0.94;
+    b = 6.0464;
 	// Initialization of the buffer (for the filter)
 	bufferIndex = 0;
 	bufferFilled = false;
